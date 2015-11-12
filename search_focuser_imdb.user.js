@@ -2,6 +2,7 @@
 // @name        IMDB Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on IMDB's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_imdb.user.js
 // @grant       none
 // @match       *://www.imdb.com/*
 // @version     0.2

@@ -2,6 +2,7 @@
 // @name        Google Play Music Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on Google Play Music's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_google_play_music.user.js
 // @grant       none
 // @match       *://play.google.com/music/*
 // @version     0.1

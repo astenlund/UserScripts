@@ -2,6 +2,7 @@
 // @name        alternativeTo Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on alternativeTo's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_alternativeto.user.js
 // @grant       none
 // @match       *://alternativeto.net/*
 // @version     0.2

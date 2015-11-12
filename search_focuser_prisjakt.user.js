@@ -2,6 +2,7 @@
 // @name        Prisjakt Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on Prisjakt's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_prisjakt.user.js
 // @grant       none
 // @match       *://www.prisjakt.nu/*
 // @version     0.2

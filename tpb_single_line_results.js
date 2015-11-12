@@ -3,6 +3,7 @@
 // @namespace    fork-scripts
 // @version      0.1
 // @description  Makes sure that the results are shown with a single line per item.
+// @downloadURL  https://github.com/astenlund/UserScripts/raw/master/tpb_single_line_results.js
 // @author       Andreas Stenlund
 // @match        https://thepiratebay.tld/search/*
 // @grant        none

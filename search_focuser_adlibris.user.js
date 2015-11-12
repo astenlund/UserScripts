@@ -2,6 +2,7 @@
 // @name        adlibris Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on adlibris search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_adlibris.user.js
 // @grant       none
 // @match       *://www.adlibris.com/*
 // @version     0.2

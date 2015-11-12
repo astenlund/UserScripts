@@ -2,6 +2,7 @@
 // @name        wiki Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on wiki's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_wiki.user.js
 // @grant       none
 // @match       *://wiki/*
 // @version     0.2

@@ -2,6 +2,7 @@
 // @name        Goodreads Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on Goodreads' search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_goodreads.user.js
 // @grant       none
 // @match       *://www.goodreads.com/*
 // @version     0.2

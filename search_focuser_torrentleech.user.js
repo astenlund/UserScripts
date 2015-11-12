@@ -2,6 +2,7 @@
 // @name        TorrentLeech Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on TorrentLeech's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_torrentleech.user.js
 // @grant       none
 // @match       *://www.torrentleech.org/*
 // @version     0.3

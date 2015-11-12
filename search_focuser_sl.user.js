@@ -2,6 +2,7 @@
 // @name        SL Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on SL's from box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_sl.user.js
 // @grant       none
 // @match       *://sl.se/*
 // @version     0.2

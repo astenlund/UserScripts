@@ -2,6 +2,7 @@
 // @name        clas ohlson Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on clas ohlson's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_clasohlson.user.js
 // @grant       none
 // @match       *://www.clasohlson.com/*
 // @version     0.2

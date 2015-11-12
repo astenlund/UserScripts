@@ -2,6 +2,7 @@
 // @name        TheTVDB.com Search Focuser
 // @namespace   fork-scripts
 // @description This script puts focus on TheTVDB.com's search box on pageload and on esc key press
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/search_focuser_thetvdb.user.js
 // @grant       none
 // @match       *://thetvdb.com/*
 // @version     0.1

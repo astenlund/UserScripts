@@ -2,6 +2,7 @@
 // @name        trakt UserScript for IMDb
 // @namespace   fork-scripts
 // @description Find a movie on trakt
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/trakt_imdb.user.js
 // @grant       none
 // @version     0.1
 // @match       *://*.imdb.com/title/tt*

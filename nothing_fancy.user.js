@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Nothing Fancy - Movies on Google Play
 // @namespace    fork-scripts
-// @version      0.2
+// @version      0.3
 // @description  Remove expensive movies from Google Play
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/nothing_fancy.user.js
 // @author       Andreas Stenlund
-// @match        https://play.google.com/store/movies/new
+// @match        https://play.google.com/store/movies*
 // @grant        none
 // ==/UserScript==
 

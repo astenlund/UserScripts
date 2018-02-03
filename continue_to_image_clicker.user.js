@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Continue to Image Clicker
 // @namespace    fork-scripts
-// @version      0.1.2
+// @version      0.1.3
 // @description  try to take over the world!
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/continue_to_image_clicker.user.js
 // @author       Andreas Stenlund

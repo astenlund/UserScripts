@@ -2,7 +2,7 @@
 // @name        Play Movies UserScript for Trakt.tv
 // @namespace   fork-scripts
 // @description Find a movie on Play Movies
-// @downloadURL https://github.com/astenlund/UserScripts/raw/master/trakt_imdb.user.js
+// @downloadURL https://github.com/astenlund/UserScripts/raw/master/playmovies_trakt.user.js
 // @grant       none
 // @version     0.1
 // @match       *://trakt.tv/movies/*

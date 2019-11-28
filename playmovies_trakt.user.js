@@ -12,7 +12,7 @@ var main = function() {
     var movie_title = $('meta[property="og:title"]').attr('content');
     var search_url = 'https://play.google.com/store/search?q=' + movie_title + '&c=movies';
 
-    $('ul.external li').append('<a target="_blank" href="' + search_url + '" data-original-title title>Play Movies</a>');
+    $('<a target="_blank" href="' + search_url + '" data-original-title title>Play Movies</a>').insertBefore('#info-wrapper .sidebar ul.external li a:contains("IMDB")');
 }
 
 main();

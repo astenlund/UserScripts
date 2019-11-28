@@ -5,8 +5,7 @@
 // @description  try to take over the world!
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_keyboard.user.js
 // @author       Andreas Stenlund
-// @match        *://trakt.tv/shows/*
-// @match        *://trakt.tv/movies/*
+// @match        *://trakt.tv/*
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
@@ -14,26 +13,45 @@
 (function() {
     'use strict';
 
-    document.addEventListener('keyup', function(event) {
-        switch(event.code) {
+    const handleActionButtonKeypresses = code => {
+        const buttons = $("#info-wrapper .action-buttons");
+
+        if (!buttons.length) {
+            return false;
+        }
+
+        switch(code) {
             case "KeyL":
-                if ($("#info-wrapper .action-buttons .popover.with-list").length) {
-                    $("#info-wrapper .action-buttons .popover.with-list i.cancel").click();
-                }
-                else {
-                    $("#info-wrapper .action-buttons a.btn-list").click();
-                }
+                buttons.find(".popover.with-list").length
+                    ? buttons.find(".popover.with-list i.cancel").click()
+                    : buttons.find("a.btn-list").click();
                 break;
             case "KeyH":
-                $("#info-wrapper .action-buttons a.btn-watch").click()
-                $("#info-wrapper .action-buttons .popover-content button.btn-primary:contains('Right now')").click();
+                buttons.find("a.btn-watch").click()
+                buttons.find(".popover-content button.btn-primary:contains('Right now')").click();
                 break;
+            default:
+                return false;
+        }
+
+        return true;
+    }
+
+    const handleGeneralKeypresses = code => {
+        switch(code) {
             case "KeyC":
                 localStorage.clear();
                 location.reload(true);
                 break;
             default:
-                break;
+                return false;
         }
+
+        return true;
+    }
+
+    document.addEventListener('keyup', event => {
+        handleActionButtonKeypresses(event.code) ||
+        handleGeneralKeypresses(event.code);
     });
 })();

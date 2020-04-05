@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt.tv keyboard navigation
 // @namespace    fork-scripts
-// @version      0.1
+// @version      0.2
 // @description  try to take over the world!
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_keyboard.user.js
 // @author       Andreas Stenlund
@@ -13,14 +13,14 @@
 (function() {
     'use strict';
 
-    const handleActionButtonKeypresses = code => {
+    const handleActionButtonKeypresses = event => {
         const buttons = $("#info-wrapper .action-buttons");
 
         if (!buttons.length) {
             return false;
         }
 
-        switch(code) {
+        switch(event.code) {
             case "KeyL":
                 buttons.find(".popover.with-list").length
                     ? buttons.find(".popover.with-list i.cancel").click()
@@ -37,21 +37,19 @@
         return true;
     }
 
-    const handleGeneralKeypresses = code => {
-        switch(code) {
-            case "KeyC":
-                localStorage.clear();
-                location.reload(true);
-                break;
-            default:
-                return false;
+    const handleGeneralKeypresses = event => {
+        if (event.code == "KeyC" && event.ctrlKey && event.altKey)
+        {
+            localStorage.clear();
+            location.reload(true);
+            return true;
         }
 
-        return true;
+        return false;
     }
 
     document.addEventListener('keyup', event => {
-        handleActionButtonKeypresses(event.code) ||
-        handleGeneralKeypresses(event.code);
+        handleActionButtonKeypresses(event) ||
+        handleGeneralKeypresses(event);
     });
 })();

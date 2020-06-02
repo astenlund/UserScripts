@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt.tv keyboard navigation
 // @namespace    fork-scripts
-// @version      0.2
+// @version      0.3
 // @description  try to take over the world!
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_keyboard.user.js
 // @author       Andreas Stenlund
@@ -37,19 +37,7 @@
         return true;
     }
 
-    const handleGeneralKeypresses = event => {
-        if (event.code == "KeyC" && event.ctrlKey && event.altKey)
-        {
-            localStorage.clear();
-            location.reload(true);
-            return true;
-        }
-
-        return false;
-    }
-
     document.addEventListener('keyup', event => {
         handleActionButtonKeypresses(event) ||
-        handleGeneralKeypresses(event);
     });
 })();

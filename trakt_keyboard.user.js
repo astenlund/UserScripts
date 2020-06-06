@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt.tv keyboard navigation
 // @namespace    fork-scripts
-// @version      0.3
+// @version      0.4
 // @description  try to take over the world!
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_keyboard.user.js
 // @author       Andreas Stenlund
@@ -27,7 +27,7 @@
                     : buttons.find("a.btn-list").click();
                 break;
             case "KeyH":
-                buttons.find("a.btn-watch").click()
+                buttons.find("a.btn-watch").click();
                 buttons.find(".popover-content button.btn-primary:contains('Right now')").click();
                 break;
             default:
@@ -38,6 +38,6 @@
     }
 
     document.addEventListener('keyup', event => {
-        handleActionButtonKeypresses(event) ||
+        handleActionButtonKeypresses(event);
     });
 })();

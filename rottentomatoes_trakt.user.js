@@ -4,7 +4,7 @@
 // @description Find a movie on Rotten Tomatoes
 // @downloadURL https://github.com/astenlund/UserScripts/raw/master/rottentomatoes_trakt.user.js
 // @grant       none
-// @version     0.2
+// @version     0.3
 // @match       *://trakt.tv
 // @match       *://trakt.tv/*
 // ==/UserScript==
@@ -15,7 +15,11 @@
     var addRT = function() {
         var url = document.location;
 
-        if (!/.+\:\/\/trakt\.tv\/movies\/.+/.test(url) && !/.+\:\/\/trakt\.tv\/shows\/.+/.test(url)) {
+        if (!/trakt\.tv\/movies/.test(url) && !/trakt\.tv\/shows/.test(url)) {
+            return;
+        }
+
+        if (/trakt\.tv\/shows\/.+?\/seasons\/\d+/.test(url)) {
             return;
         }
 

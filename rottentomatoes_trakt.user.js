@@ -4,7 +4,7 @@
 // @description Find a movie on Rotten Tomatoes
 // @downloadURL https://github.com/astenlund/UserScripts/raw/master/rottentomatoes_trakt.user.js
 // @grant       none
-// @version     0.3
+// @version     0.4
 // @match       *://trakt.tv
 // @match       *://trakt.tv/*
 // ==/UserScript==
@@ -33,7 +33,11 @@
             return;
         }
 
-        var title = $('meta[property="og:title"]').attr('content');
+        var title = $('#info-wrapper #overview a.btn-checkin').attr('data-top-title');
+        if (title == undefined) {
+            title = $('meta[property="og:title"]').attr('content');
+        }
+
         var search_url = 'https://www.rottentomatoes.com/search?search=' + title;
 
         $('<a target="_blank" href="' + search_url + '" data-original-title title>Rotten Tomatoes</a>').insertBefore(imdbLmnt);

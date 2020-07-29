@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         HAProxy keyboard shortcuts
 // @namespace    fork-scripts
-// @version      0.2
+// @version      0.3
 // @description  try to take over the world!
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/haproxy_keyboard.user.js
 // @author       Andreas Stenlund
 // @match        *://tckbalancete1.ticket.se:8080/*
+// @match        *://tckbalancete2.ticket.se:8080/*
 // @match        *://tckbalancetest1.ticket.se/*
 // @match        *://tckbalance1.ticket.se:8080/*
 // @grant        none

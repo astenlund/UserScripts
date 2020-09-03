@@ -4,7 +4,7 @@
 // @description Find a movie on Rotten Tomatoes
 // @downloadURL https://github.com/astenlund/UserScripts/raw/master/rottentomatoes_trakt.user.js
 // @grant       none
-// @version     0.4
+// @version     0.5
 // @match       *://trakt.tv
 // @match       *://trakt.tv/*
 // ==/UserScript==
@@ -37,6 +37,8 @@
         if (title == undefined) {
             title = $('meta[property="og:title"]').attr('content');
         }
+
+        title = title.replace(/\s\(\d{4}\)$/, ''); // Remove year from title
 
         var search_url = 'https://www.rottentomatoes.com/search?search=' + title;
 

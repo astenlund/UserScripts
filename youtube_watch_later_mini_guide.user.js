@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Watch Later Mini Guide
 // @namespace    fork-scripts
-// @version      0.1
+// @version      0.2
 // @description  Adds a Watch Later link to YouTube's mini guide (collapsed sidebar)
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @match        https://www.youtube.com/*
@@ -14,12 +14,31 @@
 (function() {
     'use strict';
 
+    function getSvgPathForWatchLaterIcon() {
+        const isOnWatchLater = window.location.href.includes('list=WL');
+        if (isOnWatchLater) {
+            // Filled clock icon for when we're on the Watch Later page (YouTube's exact SVG)
+            return 'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Zm1-15c0-.552-.448-1-1-1s-1 .448-1 1v5.5l.4.3 4 3c.442.331 1.069.242 1.4-.2.331-.442.242-1.069-.2-1.4L13 11.5V7Z';
+        } else {
+            // Unfilled clock icon for other pages
+            return 'M20.5 12c0 4.694-3.806 8.5-8.5 8.5S3.5 16.694 3.5 12 7.306 3.5 12 3.5s8.5 3.806 8.5 8.5Zm1.5 0c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2s10 4.477 10 10Zm-9.25-5c0-.414-.336-.75-.75-.75s-.75.336-.75.75v5.375l.3.225 4 3c.331.248.802.181 1.05-.15.248-.331.181-.801-.15-1.05l-3.7-2.775V7Z';
+        }
+    }
+
     function addWatchLaterToMiniGuide() {
         const miniGuide = document.querySelector('ytd-mini-guide-renderer');
         if (!miniGuide) return;
 
         // Check if we already added the link
-        if (miniGuide.querySelector('[data-custom-watch-later]')) return;
+        const existingButton = miniGuide.querySelector('[data-custom-watch-later]');
+        if (existingButton) {
+            // Update the icon based on current page
+            const path = existingButton.querySelector('svg path');
+            if (path) {
+                path.setAttribute('d', getSvgPathForWatchLaterIcon());
+            }
+            return;
+        }
 
         // Find the items container
         const itemsContainer = miniGuide.querySelector('#items');
@@ -48,8 +67,10 @@
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('clip-rule', 'evenodd');
-        path.setAttribute('d', 'M20.5 12c0 4.694-3.806 8.5-8.5 8.5S3.5 16.694 3.5 12 7.306 3.5 12 3.5s8.5 3.806 8.5 8.5Zm1.5 0c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2s10 4.477 10 10Zm-9.25-5c0-.414-.336-.75-.75-.75s-.75.336-.75.75v5.375l.3.225 4 3c.331.248.802.181 1.05-.15.248-.331.181-.801-.15-1.05l-3.7-2.775V7Z');
         path.setAttribute('fill-rule', 'evenodd');
+
+        // Set the appropriate SVG path based on current page
+        path.setAttribute('d', getSvgPathForWatchLaterIcon());
 
         svg.appendChild(path);
         iconDiv.appendChild(svg);
@@ -116,75 +137,98 @@
             }
         }
 
-        // Copy styles from existing Subscriptions button
-        const subscriptionsButton = Array.from(itemsContainer.children).find(item => {
-            const title = item.querySelector('.title');
-            return title && title.textContent.trim() === 'Subscriptions';
-        });
+        // Copy styles from existing Subscriptions button with retry mechanism
+        function copyStylesFromSubscriptions() {
+            const subscriptionsButton = Array.from(itemsContainer.children).find(item => {
+                const title = item.querySelector('.title');
+                return title && title.textContent.trim() === 'Subscriptions';
+            });
 
-        if (subscriptionsButton) {
-            const computedStyle = window.getComputedStyle(subscriptionsButton);
-            const iconElement = subscriptionsButton.querySelector('.guide-icon');
-            const titleElement = subscriptionsButton.querySelector('.title');
+            if (subscriptionsButton) {
+                const computedStyle = window.getComputedStyle(subscriptionsButton);
+                const iconElement = subscriptionsButton.querySelector('.guide-icon');
+                const titleElement = subscriptionsButton.querySelector('.title');
 
-            // Apply computed styles to our button
-            watchLaterItem.style.width = computedStyle.width;
-            watchLaterItem.style.height = computedStyle.height;
-            watchLaterItem.style.display = computedStyle.display;
-            watchLaterItem.style.flexDirection = computedStyle.flexDirection;
-            watchLaterItem.style.alignItems = computedStyle.alignItems;
-            watchLaterItem.style.justifyContent = computedStyle.justifyContent;
-            watchLaterItem.style.padding = computedStyle.padding;
-            watchLaterItem.style.margin = computedStyle.margin;
-            watchLaterItem.style.borderRadius = computedStyle.borderRadius;
-            watchLaterItem.style.cursor = computedStyle.cursor;
-            watchLaterItem.style.boxSizing = computedStyle.boxSizing;
-            watchLaterItem.style.background = computedStyle.background;
-            watchLaterItem.style.border = computedStyle.border;
-
-            // Copy icon styles
-            if (iconElement) {
-                const iconStyle = window.getComputedStyle(iconElement);
-                iconDiv.style.width = iconStyle.width;
-                iconDiv.style.height = iconStyle.height;
-                iconDiv.style.margin = iconStyle.margin;
-                iconDiv.style.marginBottom = iconStyle.marginBottom;
-                iconDiv.style.marginTop = iconStyle.marginTop;
-                iconDiv.style.display = iconStyle.display;
-                iconDiv.style.alignItems = iconStyle.alignItems;
-                iconDiv.style.justifyContent = iconStyle.justifyContent;
-                iconDiv.style.color = iconStyle.color;
-            }
-
-            // Copy title styles
-            if (titleElement) {
-                const titleStyle = window.getComputedStyle(titleElement);
-                titleDiv.style.color = titleStyle.color;
-                titleDiv.style.fontFamily = titleStyle.fontFamily;
-                titleDiv.style.fontSize = titleStyle.fontSize;
-                titleDiv.style.lineHeight = titleStyle.lineHeight;
-                titleDiv.style.fontWeight = titleStyle.fontWeight;
-                titleDiv.style.textAlign = titleStyle.textAlign;
-                titleDiv.style.display = titleStyle.display;
-                titleDiv.style.maxWidth = titleStyle.maxWidth;
-                titleDiv.style.wordWrap = titleStyle.wordWrap;
-            }
-
-            // Add hover styles by creating CSS rules that match YouTube's behavior
-            const hoverStyle = document.createElement('style');
-            hoverStyle.textContent = `
-                .custom-watch-later-button:hover {
-                    background-color: rgba(255, 255, 255, 0.1) !important;
+                // Check if styles are properly loaded (height should be > 0)
+                if (computedStyle.height === '0px' || computedStyle.height === 'auto') {
+                    return false; // Styles not ready yet
                 }
 
-                html:not([dark]) .custom-watch-later-button:hover {
-                    background-color: rgba(0, 0, 0, 0.05) !important;
+                // Apply computed styles to our button
+                watchLaterItem.style.width = computedStyle.width;
+                watchLaterItem.style.height = computedStyle.height;
+                watchLaterItem.style.display = computedStyle.display;
+                watchLaterItem.style.flexDirection = computedStyle.flexDirection;
+                watchLaterItem.style.alignItems = computedStyle.alignItems;
+                watchLaterItem.style.justifyContent = computedStyle.justifyContent;
+                watchLaterItem.style.padding = computedStyle.padding;
+                watchLaterItem.style.margin = computedStyle.margin;
+                watchLaterItem.style.borderRadius = computedStyle.borderRadius;
+                watchLaterItem.style.cursor = computedStyle.cursor;
+                watchLaterItem.style.boxSizing = computedStyle.boxSizing;
+                watchLaterItem.style.background = computedStyle.background;
+                watchLaterItem.style.border = computedStyle.border;
+
+                // Copy icon styles
+                if (iconElement) {
+                    const iconStyle = window.getComputedStyle(iconElement);
+                    iconDiv.style.width = iconStyle.width;
+                    iconDiv.style.height = iconStyle.height;
+                    iconDiv.style.margin = iconStyle.margin;
+                    iconDiv.style.marginBottom = iconStyle.marginBottom;
+                    iconDiv.style.marginTop = iconStyle.marginTop;
+                    iconDiv.style.display = iconStyle.display;
+                    iconDiv.style.alignItems = iconStyle.alignItems;
+                    iconDiv.style.justifyContent = iconStyle.justifyContent;
+                    iconDiv.style.color = iconStyle.color;
                 }
-            `;
-            if (!document.querySelector('#custom-watch-later-hover-style')) {
-                hoverStyle.id = 'custom-watch-later-hover-style';
-                document.head.appendChild(hoverStyle);
+
+                // Copy title styles
+                if (titleElement) {
+                    const titleStyle = window.getComputedStyle(titleElement);
+                    titleDiv.style.color = titleStyle.color;
+                    titleDiv.style.fontFamily = titleStyle.fontFamily;
+                    titleDiv.style.fontSize = titleStyle.fontSize;
+                    titleDiv.style.lineHeight = titleStyle.lineHeight;
+                    titleDiv.style.fontWeight = titleStyle.fontWeight;
+                    titleDiv.style.textAlign = titleStyle.textAlign;
+                    titleDiv.style.display = titleStyle.display;
+                    titleDiv.style.maxWidth = titleStyle.maxWidth;
+                    titleDiv.style.wordWrap = titleStyle.wordWrap;
+                }
+
+                // Add hover styles by creating CSS rules that match YouTube's behavior
+                const hoverStyle = document.createElement('style');
+                hoverStyle.textContent = `
+                    .custom-watch-later-button:hover {
+                        background-color: rgba(255, 255, 255, 0.1) !important;
+                    }
+
+                    html:not([dark]) .custom-watch-later-button:hover {
+                        background-color: rgba(0, 0, 0, 0.05) !important;
+                    }
+                `;
+                if (!document.querySelector('#custom-watch-later-hover-style')) {
+                    hoverStyle.id = 'custom-watch-later-hover-style';
+                    document.head.appendChild(hoverStyle);
+                }
+
+                return true; // Successfully copied styles
             }
+            return false; // Failed to find subscriptions button or styles not ready
+        }
+
+        // Try to copy styles immediately, then retry if needed
+        if (!copyStylesFromSubscriptions()) {
+            // If first attempt failed, try again after a short delay
+            setTimeout(() => {
+                if (!copyStylesFromSubscriptions()) {
+                    // If second attempt failed, try once more after a longer delay
+                    setTimeout(() => {
+                        copyStylesFromSubscriptions();
+                    }, 500);
+                }
+            }, 100);
         } else {
             // Fallback to our custom styles if Subscriptions button not found
             const style = document.createElement('style');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Watch Later Mini Guide
 // @namespace    fork-scripts
-// @version      0.2
+// @version      0.3
 // @description  Adds a Watch Later link to YouTube's mini guide (collapsed sidebar)
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @match        https://www.youtube.com/*
@@ -84,8 +84,8 @@
         watchLaterItem.appendChild(iconDiv);
         watchLaterItem.appendChild(titleDiv);
 
-        // Add click handler that delegates to the official Watch Later button
-        watchLaterItem.addEventListener('click', function(e) {
+        // Add handler function that delegates to the official Watch Later button
+        function handleWatchLaterAction(e) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -116,6 +116,22 @@
                 } else {
                     window.location.href = '/playlist?list=WL';
                 }
+            }
+        }
+
+        // Add both click and touch event handlers
+        watchLaterItem.addEventListener('click', handleWatchLaterAction);
+
+        // Add touch event handling
+        let touchStarted = false;
+        watchLaterItem.addEventListener('touchstart', function(e) {
+            touchStarted = true;
+        }, { passive: true });
+
+        watchLaterItem.addEventListener('touchend', function(e) {
+            if (touchStarted) {
+                touchStarted = false;
+                handleWatchLaterAction(e);
             }
         });
 

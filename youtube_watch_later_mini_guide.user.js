@@ -112,7 +112,7 @@
                         } else {
                             window.location.href = '/playlist?list=WL';
                         }
-                    }, 100);
+                    }, 300);
                 } else {
                     window.location.href = '/playlist?list=WL';
                 }

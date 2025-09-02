@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Watch Later Mini Guide
 // @namespace    fork-scripts
-// @version      0.3
+// @version      0.4
 // @description  Adds a Watch Later link to YouTube's mini guide (collapsed sidebar)
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @match        https://www.youtube.com/*

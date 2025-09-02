@@ -89,34 +89,55 @@
             e.preventDefault();
             e.stopPropagation();
 
-            // Find and click the official Watch Later link in the expanded sidebar
-            const expandedWatchLaterLink = document.querySelector('ytd-guide-renderer a[href="/playlist?list=WL"], ytd-guide-renderer a[href*="list=WL"]');
-            if (expandedWatchLaterLink) {
-                expandedWatchLaterLink.click();
-            } else {
-                // Fallback: try to expand the sidebar first, then find the button
-                const expandButton = document.querySelector('button[aria-label="Guide"]');
-                if (expandButton) {
-                    expandButton.click();
-                    setTimeout(() => {
-                        const watchLaterAfterExpand = document.querySelector('ytd-guide-renderer a[href="/playlist?list=WL"], ytd-guide-renderer a[href*="list=WL"]');
-                        if (watchLaterAfterExpand) {
-                            watchLaterAfterExpand.click();
-                            // Collapse sidebar back to mini after a short delay
-                            setTimeout(() => {
-                                const collapseButton = document.querySelector('button[aria-label="Guide"]');
-                                if (collapseButton) {
-                                    collapseButton.click();
-                                }
-                            }, 50);
-                        } else {
-                            window.location.href = '/playlist?list=WL';
-                        }
-                    }, 300);
+            const WATCH_LATER_SELECTOR = 'ytd-guide-renderer a[href="/playlist?list=WL"], ytd-guide-renderer a[href*="list=WL"]';
+            const GUIDE_BUTTON_SELECTOR = 'button[aria-label="Guide"]';
+            
+            // Helper to find and click Watch Later link
+            function clickWatchLaterLink(shouldCollapse = false) {
+                const watchLaterLink = document.querySelector(WATCH_LATER_SELECTOR);
+                if (watchLaterLink) {
+                    watchLaterLink.click();
+                    if (shouldCollapse) {
+                        setTimeout(() => {
+                            const collapseButton = document.querySelector(GUIDE_BUTTON_SELECTOR);
+                            if (collapseButton) collapseButton.click();
+                        }, 50);
+                    }
+                    return true;
+                }
+                return false;
+            }
+            
+            // Try clicking if already visible
+            if (clickWatchLaterLink()) return;
+            
+            // Otherwise, expand sidebar and try
+            const expandButton = document.querySelector(GUIDE_BUTTON_SELECTOR);
+            if (!expandButton) {
+                console.warn('YouTube Watch Later Mini Guide: Could not find sidebar expand button');
+                return;
+            }
+            
+            expandButton.click();
+            
+            // Try with retries
+            const delays = [300, 300]; // Two attempts with 300ms delays
+            let attemptIndex = 0;
+            
+            function attemptClick() {
+                if (clickWatchLaterLink(true)) return;
+                
+                if (attemptIndex < delays.length) {
+                    setTimeout(attemptClick, delays[attemptIndex++]);
                 } else {
-                    window.location.href = '/playlist?list=WL';
+                    // Final failure - log and close sidebar
+                    console.warn('YouTube Watch Later Mini Guide: Could not find Watch Later link in sidebar');
+                    const collapseButton = document.querySelector(GUIDE_BUTTON_SELECTOR);
+                    if (collapseButton) collapseButton.click();
                 }
             }
+            
+            setTimeout(attemptClick, delays[attemptIndex++]);
         }
 
         // Add both click and touch event handlers

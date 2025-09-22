@@ -5,7 +5,7 @@
 // @downloadURL https://github.com/astenlund/UserScripts/raw/master/trakt_external_links.user.js
 // @updateURL   https://github.com/astenlund/UserScripts/raw/master/trakt_external_links.user.js
 // @grant       none
-// @version     0.6
+// @version     0.7
 // @match       *://trakt.tv
 // @match       *://trakt.tv/*
 // ==/UserScript==
@@ -13,15 +13,62 @@
 (function() {
     'use strict';
 
-    var addExternalLinks = function() {
-        var url = document.location;
-
-        // Only run on movie and show pages (but not season pages)
-        if (!/trakt\.tv\/movies/.test(url) && !/trakt\.tv\/shows/.test(url)) {
-            return;
+    const EXTERNAL_SERVICES = [
+        {
+            name: 'Letterboxd',
+            pageTypes: ['movie'],
+            buildUrl: (title) => 'https://letterboxd.com/search/' + title
+        },
+        {
+            name: 'Rotten Tomatoes',
+            pageTypes: ['movie', 'show'],
+            buildUrl: (title) => 'https://www.rottentomatoes.com/search?search=' + title
         }
+    ];
 
-        if (/trakt\.tv\/shows\/.+?\/seasons\/\d+/.test(url)) {
+    const PAGE_PATTERNS = {
+        movie: /trakt\.tv\/movies/,
+        show: /trakt\.tv\/shows/,
+        seasonExclude: /trakt\.tv\/shows\/.+?\/seasons\/\d+/
+    };
+
+    var getPageType = function(url) {
+        if (PAGE_PATTERNS.seasonExclude.test(url)) {
+            return null;
+        }
+        if (PAGE_PATTERNS.movie.test(url)) {
+            return 'movie';
+        }
+        if (PAGE_PATTERNS.show.test(url)) {
+            return 'show';
+        }
+        return null;
+    };
+
+    var extractTitle = function() {
+        var title = $('#info-wrapper #overview a.btn-checkin').attr('data-top-title');
+        if (title == undefined) {
+            title = $('meta[property="og:title"]').attr('content');
+        }
+        if (title) {
+            title = title.replace(/\s\(\d{4}\)$/, ''); // Remove year from title
+        }
+        return title;
+    };
+
+    var getApplicableServices = function(pageType) {
+        if (!pageType) return [];
+
+        return EXTERNAL_SERVICES.filter(function(service) {
+            return service.pageTypes.includes(pageType);
+        });
+    };
+
+    var addExternalLinks = function() {
+        var url = document.location.href;
+        var pageType = getPageType(url);
+
+        if (!pageType) {
             return;
         }
 
@@ -31,31 +78,18 @@
             return;
         }
 
-        // Get the title
-        var title = $('#info-wrapper #overview a.btn-checkin').attr('data-top-title');
-        if (title == undefined) {
-            title = $('meta[property="og:title"]').attr('content');
+        var title = extractTitle();
+        if (!title) {
+            return;
         }
 
-        title = title.replace(/\s\(\d{4}\)$/, ''); // Remove year from title
+        var services = getApplicableServices(pageType);
 
-        // Define external services to add
-        var services = [
-            {
-                name: 'Letterboxd',
-                url: 'https://letterboxd.com/search/' + title
-            },
-            {
-                name: 'Rotten Tomatoes',
-                url: 'https://www.rottentomatoes.com/search?search=' + title
-            }
-        ];
-
-        // Add each service if it doesn't exist
         services.forEach(function(service) {
             var existingLink = $('#info-wrapper .sidebar ul.external li a:contains("' + service.name + '")')[0];
             if (existingLink == undefined) {
-                $('<a target="_blank" href="' + service.url + '" data-original-title title>' + service.name + '</a>').insertBefore(imdbLmnt);
+                var url = service.buildUrl(title);
+                $('<a target="_blank" href="' + url + '" data-original-title title>' + service.name + '</a>').insertBefore(imdbLmnt);
             }
         });
     };

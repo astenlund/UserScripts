@@ -5,8 +5,7 @@
 // @downloadURL https://github.com/astenlund/UserScripts/raw/master/trakt_external_links.user.js
 // @updateURL   https://github.com/astenlund/UserScripts/raw/master/trakt_external_links.user.js
 // @grant       none
-// @version     0.7
-// @match       *://trakt.tv
+// @version     0.8
 // @match       *://trakt.tv/*
 // ==/UserScript==
 

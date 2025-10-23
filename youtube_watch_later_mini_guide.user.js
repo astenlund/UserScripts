@@ -610,30 +610,15 @@
     }
 
     function removeUnwantedMiniGuideEntries() {
-        const miniGuide = document.querySelector('ytd-mini-guide-renderer');
-        if (!miniGuide) return;
-
-        const itemsContainer = miniGuide.querySelector('#items');
-        if (!itemsContainer) return;
-
-        // Find all ytd-mini-guide-entry-renderer elements
-        const entries = itemsContainer.querySelectorAll('ytd-mini-guide-entry-renderer');
-
-        // List of text values to remove
         const unwantedTexts = ['Shorts', 'YouTube Music', 'You', 'Downloads'];
 
-        entries.forEach(entry => {
-            // Check if any span in this entry contains unwanted text
-            const spans = entry.querySelectorAll('span');
-            const shouldRemove = Array.from(spans).some(span => {
-                const text = span.textContent.trim();
-                return unwantedTexts.includes(text);
+        document.querySelectorAll('ytd-mini-guide-renderer ytd-mini-guide-entry-renderer')
+            .forEach(entry => {
+                if (Array.from(entry.querySelectorAll('span'))
+                    .some(span => unwantedTexts.includes(span.textContent.trim()))) {
+                    entry.remove();
+                }
             });
-
-            if (shouldRemove) {
-                entry.remove();
-            }
-        });
     }
 
     // Run when page loads

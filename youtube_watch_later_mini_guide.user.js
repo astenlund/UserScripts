@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube Watch Later & Courses Mini Guide
 // @namespace    fork-scripts
-// @version      0.5
-// @description  Adds Watch Later and Your Courses links to YouTube's mini guide (collapsed sidebar)
+// @version      0.6
+// @description  Adds Watch Later and Your Courses links to YouTube's mini guide (collapsed sidebar) and removes unwanted entries
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @match        https://www.youtube.com/*
 // @match        https://youtube.com/*
@@ -609,16 +609,45 @@
         }
     }
 
+    function removeUnwantedMiniGuideEntries() {
+        const miniGuide = document.querySelector('ytd-mini-guide-renderer');
+        if (!miniGuide) return;
+
+        const itemsContainer = miniGuide.querySelector('#items');
+        if (!itemsContainer) return;
+
+        // Find all ytd-mini-guide-entry-renderer elements
+        const entries = itemsContainer.querySelectorAll('ytd-mini-guide-entry-renderer');
+
+        // List of text values to remove
+        const unwantedTexts = ['Shorts', 'YouTube Music', 'You', 'Downloads'];
+
+        entries.forEach(entry => {
+            // Check if any span in this entry contains unwanted text
+            const spans = entry.querySelectorAll('span');
+            const shouldRemove = Array.from(spans).some(span => {
+                const text = span.textContent.trim();
+                return unwantedTexts.includes(text);
+            });
+
+            if (shouldRemove) {
+                entry.remove();
+            }
+        });
+    }
+
     // Run when page loads
     function init() {
         // Try to add immediately
         addCoursesToMiniGuide();
         addWatchLaterToMiniGuide();
+        removeUnwantedMiniGuideEntries();
 
         // Also observe for changes since YouTube is a SPA
         const observer = new MutationObserver(() => {
             addCoursesToMiniGuide();
             addWatchLaterToMiniGuide();
+            removeUnwantedMiniGuideEntries();
         });
 
         // Observe the app for changes

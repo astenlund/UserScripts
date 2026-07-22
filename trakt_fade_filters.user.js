@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Web: fade filters
 // @namespace    fork-scripts
-// @version      1.0
+// @version      1.1
 // @description  Restores fade/dim filtering in the new Trakt Web design: adds a Fade section to the filter pane and fades watched/started/watchlisted/listed posters, with hover-to-reveal.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_fade_filters.user.js

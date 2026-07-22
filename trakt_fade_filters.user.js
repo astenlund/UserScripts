@@ -17,6 +17,7 @@
 
   const STATE_KEY = 'trakt-fade-filters';
   const CACHE_KEY = 'trakt-fade-cache';
+  const CACHE_VERSION = 2;
   const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
   const MARKER_PREFIX = 'trakt-marker:invalidate:';
   const MODE_KEY = 'trakt_toggler_discover';
@@ -67,11 +68,14 @@
     }
   }
 
-  // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> }.
+  // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> }, under
+  // a top-level version stamp so a format change forces a refetch instead of
+  // serving entries the new matching logic misreads.
   function normalizeCache(raw) {
+    const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
     const cache = {};
     for (const cat of CATEGORIES) {
-      const rec = raw && typeof raw === 'object' ? raw[cat] : null;
+      const rec = versionOk ? raw[cat] : null;
       cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
     }
     return cache;
@@ -164,9 +168,9 @@
   // extended=full suppresses the per-episode seasons breakdown entirely, so
   // watched-vs-started needs this second variant: one un-paginated object
   // mapping show trakt id -> "seasonId|seasonNumber" -> episode id -> watch
-  // dates. The unique watched-episode count is the number of episode keys,
-  // specials (season number 0) excluded.
-  async function fetchEpisodeCounts(auth) {
+  // dates. Per show this yields the unique watched-episode count and the
+  // numbers of seasons with at least one play, specials (season 0) excluded.
+  async function fetchWatchedProgress(auth) {
     const url = new URL(API_BASE + '/users/me/watched/shows');
     url.searchParams.set('extended', 'min');
     url.searchParams.set('season_numbers', 'true');
@@ -176,13 +180,21 @@
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new Error('Unexpected response shape for season_numbers');
     }
-    const counts = {};
+    const progress = {};
     for (const [showId, seasons] of Object.entries(body)) {
-      counts[showId] = Object.entries(seasons)
-        .filter(([seasonKey]) => !seasonKey.endsWith('|0'))
-        .reduce((n, [, episodes]) => n + Object.keys(episodes).length, 0);
+      const seasonNumbers = [];
+      let seen = 0;
+      for (const [seasonKey, episodes] of Object.entries(seasons)) {
+        const seasonNumber = seasonKey.split('|')[1];
+        if (seasonNumber === '0') continue;
+        const episodeCount = Object.keys(episodes).length;
+        if (episodeCount === 0) continue;
+        seen += episodeCount;
+        seasonNumbers.push(seasonNumber);
+      }
+      progress[showId] = { seen, seasons: seasonNumbers };
     }
-    return counts;
+    return progress;
   }
 
   async function fetchListedItems(auth) {
@@ -213,16 +225,21 @@
 
   // Fully watched vs started: unique watched episode count (specials excluded)
   // vs the show's aired_episodes (which also excludes specials), joined by the
-  // show's numeric trakt id.
-  function splitWatchedShows(items, counts) {
+  // show's numeric trakt id. Each show contributes its own slug plus one
+  // show:<slug>:s<N> key per season with plays, so season cards fade by the
+  // season's own progress; the season keys follow the show's bucket since
+  // per-season aired counts are not available.
+  function splitWatchedShows(items, progress) {
     const watched = [];
     const started = [];
     for (const item of items) {
       const show = item.show;
       if (!show || !show.ids || !show.ids.slug) continue;
       const aired = show.aired_episodes || 0;
-      const seen = counts[String(show.ids.trakt)] || 0;
-      (aired > 0 && seen >= aired ? watched : started).push('show:' + show.ids.slug);
+      const p = progress[String(show.ids.trakt)] || { seen: 0, seasons: [] };
+      const slug = 'show:' + show.ids.slug;
+      const bucket = aired > 0 && p.seen >= aired ? watched : started;
+      bucket.push(slug, ...p.seasons.map(n => `${slug}:s${n}`));
     }
     return { watched, started };
   }
@@ -255,9 +272,9 @@
     refreshInFlight = true;
     try {
       const captured = currentMarkers();
-      const [shows, counts, movies, watchlist, listed] = await Promise.allSettled([
+      const [shows, progress, movies, watchlist, listed] = await Promise.allSettled([
         fetchAll(auth, '/users/me/watched/shows?extended=full'),
-        fetchEpisodeCounts(auth),
+        fetchWatchedProgress(auth),
         fetchAll(auth, '/users/me/watched/movies'),
         fetchAll(auth, '/users/me/watchlist'),
         fetchListedItems(auth),
@@ -266,14 +283,14 @@
       let anyFailed = false;
       let changed = false;
 
-      if (shows.status === 'fulfilled' && counts.status === 'fulfilled' && movies.status === 'fulfilled') {
-        const split = splitWatchedShows(shows.value, counts.value);
+      if (shows.status === 'fulfilled' && progress.status === 'fulfilled' && movies.status === 'fulfilled') {
+        const split = splitWatchedShows(shows.value, progress.value);
         cache.watched = { slugs: [...split.watched, ...movieSlugs(movies.value)], fetchedAt: now };
         cache.started = { slugs: split.started, fetchedAt: now };
         changed = true;
       } else {
         anyFailed = true;
-        warn('Watched/started refresh failed; keeping stale data', shows.reason || counts.reason || movies.reason);
+        warn('Watched/started refresh failed; keeping stale data', shows.reason || progress.reason || movies.reason);
       }
 
       if (watchlist.status === 'fulfilled') {
@@ -293,7 +310,7 @@
       }
 
       if (changed) {
-        writeJson(CACHE_KEY, cache);
+        writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
         sets = buildSets(cache);
       }
       committedMarkers = captured;
@@ -386,21 +403,38 @@
     if (startedRow) startedRow.style.display = activeMode() === 'movie' ? 'none' : '';
   }
 
-  function cardSlug(card) {
+  // A card's anchor reveals its granularity via query params: an `episode`
+  // param marks an episode-specific card (Continue Watching, Calendar), a
+  // `season` param without `episode` marks a season card, neither marks a
+  // plain show/movie card.
+  function cardTarget(card) {
     for (const anchor of card.querySelectorAll('a[href]')) {
-      const segments = anchor.pathname.split('/').filter(Boolean);
+      const url = new URL(anchor.href, location.origin);
+      const segments = url.pathname.split('/').filter(Boolean);
       if (segments.length >= 2 && (segments[0] === 'shows' || segments[0] === 'movies')) {
-        return (segments[0] === 'shows' ? 'show:' : 'movie:') + segments[1];
+        return {
+          slug: (segments[0] === 'shows' ? 'show:' : 'movie:') + segments[1],
+          season: url.searchParams.get('season'),
+          episode: url.searchParams.get('episode'),
+        };
       }
     }
     return null;
   }
 
+  // Episode cards never fade by show membership: lanes like Continue Watching
+  // and Calendar surface unwatched episodes of started shows on purpose, so
+  // dimming them would defeat those lanes. Season cards fade by the season's
+  // own progress; show/movie cards by their slug.
   function applyFades() {
     const enabled = CATEGORIES.filter(cat => state[cat]);
     for (const card of document.querySelectorAll('div.trakt-card')) {
-      const slug = cardSlug(card);
-      const fade = slug !== null && enabled.some(cat => sets[cat].has(slug));
+      const target = cardTarget(card);
+      let fade = false;
+      if (target !== null && target.episode === null) {
+        const key = target.season === null ? target.slug : `${target.slug}:s${target.season}`;
+        fade = enabled.some(cat => sets[cat].has(key));
+      }
       card.classList.toggle(FADE_CLASS, fade);
     }
   }

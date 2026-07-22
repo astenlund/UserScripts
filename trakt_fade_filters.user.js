@@ -30,8 +30,9 @@
   const STYLE_ID = 'tff-style';
   const SECTION_ATTR = 'data-tff-section';
   const ROW_ATTR = 'data-tff-row';
-  const CATEGORIES = ['watched', 'started', 'watchlisted', 'listed'];
-  const LABELS = { watched: 'Watched', started: 'Started', watchlisted: 'Watchlisted', listed: 'Listed' };
+  const CATEGORIES = ['started', 'watched', 'watchlisted', 'listed'];
+  const LABELS = { started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' };
+  const SAVE_BUTTON_SELECTOR = 'button[aria-label="Set filters as default"]';
 
   function warn(...args) {
     console.warn('[trakt-fade-filters]', ...args);
@@ -362,7 +363,6 @@
       input.checked = state[cat];
       input.addEventListener('change', () => {
         state[cat] = input.checked;
-        writeJson(STATE_KEY, state);
         queueScan();
       });
       toggles.appendChild(row);
@@ -434,6 +434,17 @@
       requestAnimationFrame(run);
     }
   }
+
+  // Fade toggles apply in-memory immediately but persist only when the user
+  // clicks the pane's save button ("Set filters as default", matched by
+  // aria-label since the surrounding bits-* ids are regenerated per render);
+  // a reload reverts unsaved toggles to the last saved state. Delegated from
+  // document so it survives pane re-renders.
+  document.addEventListener('click', e => {
+    if (e.target instanceof Element && e.target.closest(SAVE_BUTTON_SELECTOR)) {
+      writeJson(STATE_KEY, state);
+    }
+  });
 
   // Initial pass + re-run as the SPA renders; class toggles are attribute
   // mutations, so applyFades never retriggers this childList observer.

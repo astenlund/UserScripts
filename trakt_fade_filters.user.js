@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Web: fade filters
 // @namespace    fork-scripts
-// @version      1.1
+// @version      1.2
 // @description  Restores fade/dim filtering in the new Trakt Web design: adds a Fade section to the filter pane and fades watched/started/watchlisted/listed posters, with hover-to-reveal.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_fade_filters.user.js
@@ -439,7 +439,21 @@
     }
   }
 
+  // Fading is scoped to the /discover pages: personal surfaces (home lanes
+  // like Start Watching, watchlist, lists) consist of tracked items by
+  // definition, so fading there would dim entire lanes. The @match stays
+  // site-wide because the SPA navigates without reloading; outside /discover
+  // the scan only clears stale fade classes on reused nodes and skips the
+  // Fade section and API refreshes entirely.
+  function fadingActive() {
+    return location.pathname === '/discover' || location.pathname.startsWith('/discover/');
+  }
+
   function scan() {
+    if (!fadingActive()) {
+      document.querySelectorAll('.' + FADE_CLASS).forEach(el => el.classList.remove(FADE_CLASS));
+      return;
+    }
     injectStyles();
     ensureFadeSection();
     applyFades();

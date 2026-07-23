@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Web: fade filters
 // @namespace    fork-scripts
-// @version      1.7
+// @version      1.8
 // @description  Restores fade/dim filtering in the new Trakt Web design: adds a Fade section to the filter pane and fades watched/started/watchlisted/listed posters, with hover-to-reveal.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_fade_filters.user.js
@@ -341,6 +341,7 @@
       .${FADE_CLASS} .trakt-card-cover, .${FADE_CLASS} .trakt-card-footer,
       .${FADE_CLASS} .trakt-summary-card-details,
       .${FADE_CLASS} .trakt-summary-card-bottom-bar,
+      .${FADE_CLASS} .trakt-card-action-bar,
       .${FADE_CLASS} .trakt-summary-card-background img {
         transition: opacity 250ms ease, filter 250ms ease !important;
       }
@@ -355,7 +356,8 @@
       }
       .${FADE_CLASS} .trakt-card-footer,
       .${FADE_CLASS} .trakt-summary-card-details,
-      .${FADE_CLASS} .trakt-summary-card-bottom-bar {
+      .${FADE_CLASS} .trakt-summary-card-bottom-bar,
+      .${FADE_CLASS} .trakt-card-action-bar {
         filter: brightness(0.5) !important;
       }
       .${FADE_CLASS}:hover .trakt-card-cover,
@@ -365,7 +367,8 @@
       }
       .${FADE_CLASS}:hover .trakt-card-footer,
       .${FADE_CLASS}:hover .trakt-summary-card-details,
-      .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar {
+      .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
+      .${FADE_CLASS}:hover .trakt-card-action-bar {
         filter: none !important;
       }
       .${HIDE_CLASS} {

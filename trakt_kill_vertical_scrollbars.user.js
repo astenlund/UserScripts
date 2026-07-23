@@ -15,7 +15,14 @@
 (function () {
   'use strict';
 
-  const FIXED_ATTR = 'data-vsb-fixed';
+  // The SPA's re-renders strip unknown attributes from lane nodes (observed
+  // live) but leave inline styles alone, so fixes are identified by their own
+  // inline !important styles rather than by marker attributes. The app never
+  // uses !important on inline overflow styles, so the priority is a reliable
+  // signature. Reading el.style parses only the style attribute: no layout.
+  function isFixed(el) {
+    return el.style.getPropertyPriority('overflow-y') === 'important';
+  }
 
   function isHorizontalScroller(el, cs) {
     const ox = cs.overflowX;
@@ -32,7 +39,7 @@
   // lane's height, so vertical overflow is at most the scrollbar's own
   // height. Real content overflow always exceeds it. (+1 for px rounding)
   function measureArtifactLane(el) {
-    if (el.hasAttribute(FIXED_ATTR)) return null;
+    if (isFixed(el)) return null;
 
     const cs = getComputedStyle(el);
     const oy = cs.overflowY;
@@ -66,17 +73,15 @@
   function fix({ el, gutterPx }) {
     el.style.setProperty('overflow-y', 'hidden', 'important');
     el.style.setProperty('padding-bottom', gutterPx + 'px', 'important');
-    el.setAttribute(FIXED_ATTR, '1');
   }
 
   function unfix(el) {
     el.style.removeProperty('overflow-y');
     el.style.removeProperty('padding-bottom');
-    el.removeAttribute(FIXED_ATTR);
   }
 
   function staleFixes() {
-    return [...document.querySelectorAll(`[${FIXED_ATTR}]`)].filter(isStaleFix);
+    return [...document.querySelectorAll('[style]')].filter((el) => isFixed(el) && isStaleFix(el));
   }
 
   // Two-phase scan: all layout reads happen before any style writes, so a

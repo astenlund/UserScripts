@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Web: fade filters
 // @namespace    fork-scripts
-// @version      1.9
+// @version      2.0
 // @description  Restores fade/dim filtering in the new Trakt Web design: adds a Fade section to the filter pane and fades watched/started/watchlisted/listed posters, with hover-to-reveal.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_fade_filters.user.js
@@ -26,6 +26,7 @@
   const CACHE_TTL_MS = 15 * 60 * 1000;
   const RETRY_BACKOFF_MS = 60 * 1000;
   const FETCH_TIMEOUT_MS = 30 * 1000;
+  const MUTATION_SETTLE_MS = 1000;
   const PAGE_LIMIT = 1000;
   const FADE_CLASS = 'tff-fade';
   const HIDE_CLASS = 'tff-hide';
@@ -266,18 +267,56 @@
 
   let refreshInFlight = false;
   let lastFailureAt = 0;
+  let forceRefresh = false;
+
+  // Every state change in the app (mark watched, watchlist/list membership,
+  // ratings, ...) is a non-GET call to the API host by the app's own code.
+  // Hooking page fetch invalidates our cache the moment one succeeds, so
+  // fades reflect the new reality without a page refresh; the marker
+  // mechanism stays as backup and for actions performed in other tabs. The
+  // short settle delay gives the server time to reflect the write before we
+  // refetch. Checking response.ok does not consume the body, and our own
+  // requests are GETs, so the hook cannot loop on the script's own refreshes.
+  const nativeFetch = window.fetch;
+  window.fetch = function (...args) {
+    const result = nativeFetch.apply(this, args);
+    try {
+      const input = args[0];
+      const url = typeof input === 'string' ? input : input && input.url;
+      const method = ((args[1] && args[1].method) || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
+      if (typeof url === 'string' && url.startsWith(API_BASE) && method !== 'GET') {
+        result.then(response => {
+          if (response.ok) {
+            setTimeout(() => {
+              forceRefresh = true;
+              queueScan();
+            }, MUTATION_SETTLE_MS);
+          }
+        }, () => {
+          // The app's own error handling owns failed mutations.
+        });
+      }
+    } catch {
+      // Hook bookkeeping must never break the app's fetch.
+    }
+    return result;
+  };
 
   // Single-flight, atomic per category: a category's record is replaced only
   // when every fetch it depends on succeeded; otherwise it keeps its stale
   // record wholesale and the backoff gates the next attempt.
   async function refresh() {
-    if (refreshInFlight || Date.now() - lastFailureAt < RETRY_BACKOFF_MS) return;
+    if (refreshInFlight) return;
+    // A mutation-triggered refresh bypasses the failure backoff: user actions
+    // are rare and deserve promptness. Ordinary staleness still respects it.
+    if (!forceRefresh && Date.now() - lastFailureAt < RETRY_BACKOFF_MS) return;
     const auth = readAuth();
     if (!auth) {
       warn('No Trakt access token in localStorage; fading stays on cached/empty data until login');
       lastFailureAt = Date.now();
       return;
     }
+    forceRefresh = false;
     refreshInFlight = true;
     try {
       const captured = currentMarkers();
@@ -524,7 +563,7 @@
     ensureHideRows();
     ensureFadeSection();
     applyFades();
-    if (cacheStale() || markersChanged()) {
+    if (forceRefresh || cacheStale() || markersChanged()) {
       refresh().catch(e => {
         warn('Refresh failed unexpectedly', e);
         lastFailureAt = Date.now();

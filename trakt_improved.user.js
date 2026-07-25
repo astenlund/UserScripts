@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.0
-// @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, and swimlane scrollbar fixes.
+// @version      1.1
+// @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -990,6 +990,331 @@
         removeChip(row, 'lb');
       }
     }
+
+    scanCallbacks.push(scan);
+  })();
+
+  // ---------------------------------------------------------------------
+  // Feature: list item counts
+  // Restores the pre-redesign list item counts: an items chip cloned from
+  // the like-count button on user-list cards and on the list detail page
+  // header. Smart lists are skipped by construction (their cards carry no
+  // /users/.../lists/... anchor); the API stores no count for them.
+  // ---------------------------------------------------------------------
+
+  (function initListCounts() {
+    const CACHE_KEY = 'trakt-list-counts-cache';
+    const CACHE_VERSION = 1;
+    const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+    const CACHE_MAX_ENTRIES = 500;
+    const CHIP_CLASS = 'tlc-chip';
+    const KEY_ATTR = 'data-tlc-key';
+    const BULK_GATE = '*bulk*';
+    const ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'
+      + '<line x1="4" y1="6" x2="20" y2="6"/>'
+      + '<line x1="4" y1="12" x2="20" y2="12"/>'
+      + '<line x1="4" y1="18" x2="14" y2="18"/>'
+      + '</svg>';
+
+    // Cache root: { v, invalidatedAt, bulkFetchedAt, me, entries } where
+    // entries map "<owner>/<slug>" to { count, fetchedAt } or a
+    // { gone: true, fetchedAt } tombstone for a deleted list. Entries are
+    // stamped with the FETCH START time so a fetch overlapping an
+    // invalidation stores a displayable but already-stale entry instead of
+    // pinning pre-mutation data for a full TTL.
+    function loadCache() {
+      const raw = readJson(CACHE_KEY);
+      const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
+      const entries = {};
+      if (versionOk && raw.entries && typeof raw.entries === 'object') {
+        for (const [key, entry] of Object.entries(raw.entries)) {
+          const shapeOk = entry && typeof entry === 'object' && typeof entry.fetchedAt === 'number'
+            && (typeof entry.count === 'number' || entry.gone === true);
+          if (shapeOk) {
+            entries[key] = entry;
+          }
+        }
+      }
+      return {
+        invalidatedAt: versionOk && typeof raw.invalidatedAt === 'number' ? raw.invalidatedAt : 0,
+        bulkFetchedAt: versionOk && typeof raw.bulkFetchedAt === 'number' ? raw.bulkFetchedAt : 0,
+        me: versionOk && typeof raw.me === 'string' ? raw.me : null,
+        entries,
+      };
+    }
+
+    const cache = loadCache();
+
+    function persistCache() {
+      const keys = Object.keys(cache.entries);
+      if (keys.length > CACHE_MAX_ENTRIES) {
+        keys.sort((a, b) => cache.entries[a].fetchedAt - cache.entries[b].fetchedAt)
+          .slice(0, keys.length - CACHE_MAX_ENTRIES)
+          .forEach(k => delete cache.entries[k]);
+      }
+      writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
+    }
+
+    function entryStale(entry) {
+      return entry.fetchedAt < cache.invalidatedAt || Date.now() - entry.fetchedAt > CACHE_TTL_MS;
+    }
+
+    function bulkStale() {
+      return cache.bulkFetchedAt < cache.invalidatedAt || Date.now() - cache.bulkFetchedAt > CACHE_TTL_MS;
+    }
+
+    // Entries are keyed by the canonical owner username, never by "me", so
+    // the same list reached via a username URL and a /users/me/ URL shares
+    // one entry. Before the username is learned the "me" prefix passes
+    // through; those lookups miss and resolve via the API, whose response
+    // supplies the canonical owner.
+    function canonicalKey(ownerSegment, slug) {
+      const owner = ownerSegment === 'me' && cache.me ? cache.me : ownerSegment;
+      return owner + '/' + slug;
+    }
+
+    // A list detail path is exactly /users/<owner>/lists/<slug>, query
+    // string ignored. Returns null for anything else (lists index, smart
+    // list views, non-list pages).
+    function parseListPath(pathname) {
+      const segments = pathname.split('/').filter(Boolean);
+      if (segments.length !== 4 || segments[0] !== 'users' || segments[2] !== 'lists') {
+        return null;
+      }
+      return { ownerSegment: segments[1], slug: segments[3], key: canonicalKey(segments[1], segments[3]) };
+    }
+
+    // Primes the entry for one API list object under its canonical key.
+    // Returns the key, or null when the response shape has drifted.
+    function primeEntry(list, startedAt) {
+      const owner = list && list.user && list.user.ids ? list.user.ids.slug : null;
+      const slug = list && list.ids ? list.ids.slug : null;
+      if (typeof owner !== 'string' || typeof slug !== 'string' || typeof list.item_count !== 'number') {
+        return null;
+      }
+      cache.entries[owner + '/' + slug] = { count: list.item_count, fetchedAt: startedAt };
+      return owner + '/' + slug;
+    }
+
+    const backoff = createFailureBackoff();
+    const inFlight = new Set();
+    let authWarned = false;
+
+    function noteAuthMissing() {
+      if (!authWarned) {
+        authWarned = true;
+        warn('No Trakt access token in localStorage; list counts stay hidden until login');
+      }
+    }
+
+    function noteFailure(gateKey, e) {
+      if (String(e && e.message).startsWith('HTTP 401 ')) {
+        noteAuthMissing();
+      }
+      backoff.record(gateKey);
+    }
+
+    // One bulk call primes every list of the logged-in user (own and saved)
+    // and teaches the canonical username; foreign lists resolve one by one.
+    function resolveBulk() {
+      if (inFlight.has(BULK_GATE) || backoff.isBackedOff(BULK_GATE)) {
+        return;
+      }
+      const auth = readAuth();
+      if (!auth) {
+        backoff.record(BULK_GATE);
+        noteAuthMissing();
+        return;
+      }
+      inFlight.add(BULK_GATE);
+      const startedAt = Date.now();
+      (async () => {
+        // The endpoint paginates silently (one page without params); the
+        // raised limit keeps a single call sufficient for realistic list
+        // counts, and any list beyond it resolves via the per-list path.
+        const url = apiUrl('/users/me/lists');
+        url.searchParams.set('limit', 250);
+        const response = await apiGet(auth, url);
+        const body = await response.json();
+        if (!Array.isArray(body)) {
+          throw new Error('Unexpected response shape for /users/me/lists');
+        }
+        for (const list of body) {
+          primeEntry(list, startedAt);
+        }
+        const first = body[0];
+        if (first && first.user && first.user.ids && typeof first.user.ids.slug === 'string') {
+          cache.me = first.user.ids.slug;
+        }
+        cache.bulkFetchedAt = startedAt;
+        persistCache();
+        queueScan();
+      })().catch(e => {
+        noteFailure(BULK_GATE, e);
+        warn('List counts bulk refresh failed; keeping cached counts', e);
+      }).finally(() => inFlight.delete(BULK_GATE));
+    }
+
+    function resolveSingle(ownerSegment, slug) {
+      const gateKey = ownerSegment + '/' + slug;
+      if (inFlight.has(gateKey) || backoff.isBackedOff(gateKey)) {
+        return;
+      }
+      const auth = readAuth();
+      if (!auth) {
+        backoff.record(gateKey);
+        noteAuthMissing();
+        return;
+      }
+      inFlight.add(gateKey);
+      const startedAt = Date.now();
+      (async () => {
+        let response;
+        try {
+          response = await apiGet(auth, apiUrl('/users/' + ownerSegment + '/lists/' + slug));
+        } catch (e) {
+          // A deleted list is a definitive miss, not a transient failure:
+          // tombstone it so the chip disappears and the backoff cannot spin
+          // on refetching it. The tombstone ages out with the normal TTL.
+          if (String(e && e.message).startsWith('HTTP 404 ')) {
+            cache.entries[canonicalKey(ownerSegment, slug)] = { gone: true, fetchedAt: startedAt };
+            persistCache();
+            queueScan();
+            return;
+          }
+          throw e;
+        }
+        const body = await response.json();
+        if (!primeEntry(body, startedAt)) {
+          throw new Error('Unexpected response shape for ' + gateKey);
+        }
+        if (ownerSegment === 'me' && body.user && body.user.ids && typeof body.user.ids.slug === 'string') {
+          cache.me = body.user.ids.slug;
+        }
+        persistCache();
+        queueScan();
+      })().catch(e => {
+        noteFailure(gateKey, e);
+        warn('List count fetch failed for ' + gateKey + '; keeping cached value', e);
+      }).finally(() => inFlight.delete(gateKey));
+    }
+
+    function formatItems(count) {
+      return count.toLocaleString('en-US') + (count === 1 ? ' item' : ' items');
+    }
+
+    // The chip clones the adjacent like-count element so the app's
+    // Svelte-scoped styles keep applying; injected nodes are outside
+    // Svelte's virtual DOM, so the marker class and key attribute survive
+    // re-renders (unlike attributes on app-managed nodes).
+    function buildChip(likeAction) {
+      const chip = likeAction.cloneNode(true);
+      const button = chip.querySelector('button');
+      const label = chip.querySelector('.button-label p');
+      const icon = chip.querySelector('.button-icon');
+      if (!button || !label || !icon) {
+        return null;
+      }
+      chip.classList.add(CHIP_CLASS);
+      button.style.pointerEvents = 'none';
+      icon.innerHTML = ICON;
+      return chip;
+    }
+
+    // Places or refreshes the chip before a like action; removes it when
+    // there is nothing trustworthy to show (no entry yet, or a tombstone):
+    // a missing count shows nothing, never a wrong or placeholder number.
+    function ensureChip(likeAction, key, entry) {
+      let chip = likeAction.parentElement.querySelector('.' + CHIP_CLASS);
+      if (!entry || entry.gone === true) {
+        if (chip) {
+          chip.remove();
+        }
+        return null;
+      }
+      if (!chip) {
+        chip = buildChip(likeAction);
+        if (!chip) {
+          warn('Like action markup changed; cannot inject list count chip');
+          return null;
+        }
+        likeAction.before(chip);
+      }
+      chip.setAttribute(KEY_ATTR, key);
+      chip.querySelector('.button-label p').textContent = entry.count.toLocaleString('en-US');
+      const button = chip.querySelector('button');
+      button.title = formatItems(entry.count);
+      button.setAttribute('aria-label', formatItems(entry.count));
+      return chip;
+    }
+
+    function cardTarget(card) {
+      for (const anchor of card.querySelectorAll('a[href]')) {
+        const target = parseListPath(new URL(anchor.href, location.origin).pathname);
+        if (target) {
+          return target;
+        }
+      }
+      return null;
+    }
+
+    // Chip placements: the detail page header (exact list path) and every
+    // user-list card. Smart list cards fall out via parseListPath. Stray
+    // chips (the SPA reused or repurposed a container) are removed at the
+    // end of each scan.
+    function scan() {
+      const placements = [];
+      const pageTarget = parseListPath(location.pathname);
+      if (pageTarget) {
+        const headerLike = document.querySelector('.trakt-navbar-header-actions trakt-list-like-action');
+        if (headerLike) {
+          placements.push({ likeAction: headerLike, target: pageTarget });
+        }
+      }
+      for (const card of document.querySelectorAll('.trakt-list-summary-card')) {
+        const likeAction = card.querySelector('trakt-list-like-action');
+        const target = likeAction ? cardTarget(card) : null;
+        if (target) {
+          placements.push({ likeAction, target });
+        }
+      }
+      const placed = new Set();
+      let needsBulk = false;
+      for (const { likeAction, target } of placements) {
+        const entry = cache.entries[target.key] || null;
+        if (!entry || entryStale(entry)) {
+          // The bulk fetch goes first: it may prime this key (and the
+          // canonical username) in one call; the rescan it queues sends
+          // still-unresolved keys down the per-list path.
+          if (bulkStale()) {
+            needsBulk = true;
+          } else {
+            resolveSingle(target.ownerSegment, target.slug);
+          }
+        }
+        const chip = ensureChip(likeAction, target.key, entry);
+        if (chip) {
+          placed.add(chip);
+        }
+      }
+      if (needsBulk) {
+        resolveBulk();
+      }
+      for (const chip of document.querySelectorAll('.' + CHIP_CLASS)) {
+        if (!placed.has(chip)) {
+          chip.remove();
+        }
+      }
+    }
+
+    // Any successful app mutation may have changed a list (coarse by
+    // design; refreshing costs one bulk call plus per-list calls for
+    // visible foreign lists only). One root-stamp write keeps per-entry
+    // fetchedAt, and with it LRU ordering, intact.
+    mutationCallbacks.push(() => {
+      cache.invalidatedAt = Date.now();
+      persistCache();
+    });
 
     scanCallbacks.push(scan);
   })();

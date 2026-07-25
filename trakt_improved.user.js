@@ -101,6 +101,28 @@
     return response;
   }
 
+  // Per-key transient-failure gate shared by features that retry fetches
+  // after RETRY_BACKOFF_MS. Prune-on-write keeps the map bounded: an entry
+  // older than the backoff window no longer gates anything, so only
+  // failures within the last window survive.
+  function createFailureBackoff() {
+    const failedAt = {};
+    return {
+      isBackedOff(key) {
+        return failedAt[key] !== undefined && Date.now() - failedAt[key] < RETRY_BACKOFF_MS;
+      },
+      record(key) {
+        const now = Date.now();
+        for (const k of Object.keys(failedAt)) {
+          if (now - failedAt[k] >= RETRY_BACKOFF_MS) {
+            delete failedAt[k];
+          }
+        }
+        failedAt[key] = now;
+      },
+    };
+  }
+
   // One scan queue drives every feature: rAF batches scans to one per frame,
   // but rAF never fires in a hidden tab; fall back to a macrotask there so
   // fixes are in place before the tab is ever shown.
@@ -799,21 +821,8 @@
     }
 
     const inFlight = new Set();
-    const failedAt = {};
+    const backoff = createFailureBackoff();
     let authWarned = false;
-
-    // Prune-on-write keeps the failure map bounded: an entry older than the
-    // backoff window no longer gates anything, so only failures within the
-    // last window survive, instead of one entry per failed slug forever.
-    function recordFailure(key) {
-      const now = Date.now();
-      for (const k of Object.keys(failedAt)) {
-        if (now - failedAt[k] >= RETRY_BACKOFF_MS) {
-          delete failedAt[k];
-        }
-      }
-      failedAt[key] = now;
-    }
 
     // Fire-and-forget resolution: scan renders search links immediately and a
     // completed resolution queues a rescan that upgrades them to direct links.
@@ -822,12 +831,12 @@
     // retry after a short backoff.
     function resolveIds(type, slug) {
       const key = `${type}:${slug}`;
-      if (inFlight.has(key) || (failedAt[key] && Date.now() - failedAt[key] < RETRY_BACKOFF_MS)) {
+      if (inFlight.has(key) || backoff.isBackedOff(key)) {
         return;
       }
       const auth = readAuth();
       if (!auth) {
-        recordFailure(key);
+        backoff.record(key);
         if (!authWarned) {
           authWarned = true;
           warn('No Trakt access token in localStorage; keeping title-search links until login');
@@ -841,7 +850,7 @@
         cachePut(key, { imdb: ids.imdb, tmdb: ids.tmdb, rtPath, fetchedAt: Date.now() });
         queueScan();
       })().catch(e => {
-        recordFailure(key);
+        backoff.record(key);
         warn(`Id resolution failed for ${key}; keeping title-search links`, e);
       }).finally(() => inFlight.delete(key));
     }

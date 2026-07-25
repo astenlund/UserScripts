@@ -128,6 +128,47 @@
     }
   }
 
+  // Every state change in the app (mark watched, watchlist/list membership,
+  // ratings, ...) is a non-GET call to the API host by the app's own code.
+  // Hooking page fetch notifies features the moment one succeeds, so their
+  // caches reflect the new reality without a page refresh. The short settle
+  // delay gives the server time to reflect the write before features
+  // refetch. Checking response.ok does not consume the body, and feature
+  // refreshes are GETs, so the hook cannot loop on them.
+  const MUTATION_SETTLE_MS = 1000;
+  const mutationCallbacks = [];
+  const nativeFetch = pageWindow.fetch;
+  pageWindow.fetch = function (...args) {
+    const result = nativeFetch.apply(this, args);
+    try {
+      const input = args[0];
+      const url = typeof input === 'string' ? input : input && input.url;
+      const method = ((args[1] && args[1].method) || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
+      if (typeof url === 'string' && url.startsWith(API_BASE) && method !== 'GET') {
+        result.then(response => {
+          if (response.ok) {
+            setTimeout(() => {
+              // Isolate features from each other, mirroring the scan queue.
+              for (const callback of mutationCallbacks) {
+                try {
+                  callback();
+                } catch (e) {
+                  warn('Mutation callback failed; other callbacks continue', e);
+                }
+              }
+              queueScan();
+            }, MUTATION_SETTLE_MS);
+          }
+        }, () => {
+          // The app's own error handling owns failed mutations.
+        });
+      }
+    } catch {
+      // Hook bookkeeping must never break the app's fetch.
+    }
+    return result;
+  };
+
   // ---------------------------------------------------------------------
   // Feature: fade filters
   // Restores fade/dim filtering: adds a Fade section to the filter pane and
@@ -142,7 +183,6 @@
     const MARKER_PREFIX = 'trakt-marker:invalidate:';
     const MODE_KEY = 'trakt_toggler_discover';
     const CACHE_TTL_MS = 15 * 60 * 1000;
-    const MUTATION_SETTLE_MS = 1000;
     const PAGE_LIMIT = 1000;
     const FADE_CLASS = 'tff-fade';
     const HIDE_CLASS = 'tff-hide';
@@ -334,38 +374,13 @@
     let lastFailureAt = 0;
     let forceRefresh = false;
 
-    // Every state change in the app (mark watched, watchlist/list membership,
-    // ratings, ...) is a non-GET call to the API host by the app's own code.
-    // Hooking page fetch invalidates our cache the moment one succeeds, so
-    // fades reflect the new reality without a page refresh; the marker
-    // mechanism stays as backup and for actions performed in other tabs. The
-    // short settle delay gives the server time to reflect the write before we
-    // refetch. Checking response.ok does not consume the body, and our own
-    // requests are GETs, so the hook cannot loop on the script's own refreshes.
-    const nativeFetch = pageWindow.fetch;
-    pageWindow.fetch = function (...args) {
-      const result = nativeFetch.apply(this, args);
-      try {
-        const input = args[0];
-        const url = typeof input === 'string' ? input : input && input.url;
-        const method = ((args[1] && args[1].method) || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
-        if (typeof url === 'string' && url.startsWith(API_BASE) && method !== 'GET') {
-          result.then(response => {
-            if (response.ok) {
-              setTimeout(() => {
-                forceRefresh = true;
-                queueScan();
-              }, MUTATION_SETTLE_MS);
-            }
-          }, () => {
-            // The app's own error handling owns failed mutations.
-          });
-        }
-      } catch {
-        // Hook bookkeeping must never break the app's fetch.
-      }
-      return result;
-    };
+    // A mutation-triggered refresh bypasses the failure backoff (see
+    // refresh()): user actions are rare and deserve promptness. The shared
+    // hook queues the scan that notices the flag; the marker mechanism stays
+    // as backup and for actions performed in other tabs.
+    mutationCallbacks.push(() => {
+      forceRefresh = true;
+    });
 
     // Single-flight, atomic per category: a category's record is replaced only
     // when every fetch it depends on succeeded; otherwise it keeps its stale

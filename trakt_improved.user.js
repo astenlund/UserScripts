@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.1
+// @version      1.2
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -998,7 +998,9 @@
   // Feature: list item counts
   // Restores the pre-redesign list item counts: an items chip cloned from
   // the like-count button on user-list cards and on the list detail page
-  // header. Smart lists are skipped by construction (their cards carry no
+  // header, and a text suffix on card-less surfaces (lane headings that
+  // link to a single list, the watchlist page header). Smart lists are
+  // skipped by construction (their cards and headings carry no
   // /users/.../lists/... anchor); the API stores no count for them.
   // ---------------------------------------------------------------------
 
@@ -1008,6 +1010,7 @@
     const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
     const CACHE_MAX_ENTRIES = 500;
     const CHIP_CLASS = 'tlc-chip';
+    const COUNT_TEXT_CLASS = 'tlc-count-text';
     const KEY_ATTR = 'data-tlc-key';
     const BULK_GATE = '*bulk*';
     const ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'
@@ -1081,7 +1084,23 @@
       if (segments.length !== 4 || segments[0] !== 'users' || segments[2] !== 'lists') {
         return null;
       }
-      return { ownerSegment: segments[1], slug: segments[3], key: canonicalKey(segments[1], segments[3]) };
+      return { kind: 'list', ownerSegment: segments[1], slug: segments[3], key: canonicalKey(segments[1], segments[3]) };
+    }
+
+    // Watchlists have no slug; their cache keys live under the
+    // collision-free "watchlist:" prefix (list keys always contain a slash).
+    function watchlistKey(ownerSegment) {
+      const owner = ownerSegment === 'me' && cache.me ? cache.me : ownerSegment;
+      return 'watchlist:' + owner;
+    }
+
+    // A watchlist path is exactly /users/<owner>/watchlist.
+    function parseWatchlistPath(pathname) {
+      const segments = pathname.split('/').filter(Boolean);
+      if (segments.length !== 3 || segments[0] !== 'users' || segments[2] !== 'watchlist') {
+        return null;
+      }
+      return { kind: 'watchlist', ownerSegment: segments[1], key: watchlistKey(segments[1]) };
     }
 
     // Primes the entry for one API list object under its canonical key.
@@ -1199,6 +1218,52 @@
       }).finally(() => inFlight.delete(gateKey));
     }
 
+    // Watchlist counts have no list object to read; the total rides on the
+    // CORS-exposed pagination headers, and one item is the cheapest page
+    // that carries them. The bulk fetch never covers watchlist keys.
+    function resolveWatchlist(ownerSegment) {
+      const gateKey = 'watchlist:' + ownerSegment;
+      if (inFlight.has(gateKey) || backoff.isBackedOff(gateKey)) {
+        return;
+      }
+      const auth = readAuth();
+      if (!auth) {
+        backoff.record(gateKey);
+        noteAuthMissing();
+        return;
+      }
+      inFlight.add(gateKey);
+      const startedAt = Date.now();
+      (async () => {
+        const url = apiUrl('/users/' + ownerSegment + '/watchlist');
+        url.searchParams.set('limit', 1);
+        let response;
+        try {
+          response = await apiGet(auth, url);
+        } catch (e) {
+          // Same definitive-miss rule as lists: a 404 (unknown or private
+          // user) is tombstoned so the backoff cannot spin on it.
+          if (String(e && e.message).startsWith('HTTP 404 ')) {
+            cache.entries[watchlistKey(ownerSegment)] = { gone: true, fetchedAt: startedAt };
+            persistCache();
+            queueScan();
+            return;
+          }
+          throw e;
+        }
+        const count = parseInt(response.headers.get('X-Pagination-Item-Count'), 10);
+        if (!Number.isFinite(count)) {
+          throw new Error('Missing pagination item count for ' + gateKey);
+        }
+        cache.entries[watchlistKey(ownerSegment)] = { count, fetchedAt: startedAt };
+        persistCache();
+        queueScan();
+      })().catch(e => {
+        noteFailure(gateKey, e);
+        warn('Watchlist count fetch failed for ' + gateKey + '; keeping cached value', e);
+      }).finally(() => inFlight.delete(gateKey));
+    }
+
     function formatItems(count) {
       return count.toLocaleString('en-US') + (count === 1 ? ' item' : ' items');
     }
@@ -1248,6 +1313,32 @@
       return chip;
     }
 
+    // Text-suffix variant for surfaces without a like action to clone: a
+    // span cloned from a nearby styled element keeps the app's scoped
+    // styling, with small inline tweaks for its secondary role.
+    function ensureCountText({ template, parent, styles }, key, entry) {
+      let span = parent.querySelector('.' + COUNT_TEXT_CLASS);
+      if (!entry || entry.gone === true) {
+        if (span) {
+          span.remove();
+        }
+        return null;
+      }
+      if (!span) {
+        span = template.cloneNode(false);
+        span.classList.add(COUNT_TEXT_CLASS);
+        span.classList.remove('ellipsis');
+        for (const [prop, value] of Object.entries(styles)) {
+          span.style.setProperty(prop, value);
+        }
+        parent.appendChild(span);
+      }
+      span.setAttribute(KEY_ATTR, key);
+      span.textContent = '· ' + entry.count.toLocaleString('en-US');
+      span.title = formatItems(entry.count);
+      return span;
+    }
+
     function cardTarget(card) {
       for (const anchor of card.querySelectorAll('a[href]')) {
         const target = parseListPath(new URL(anchor.href, location.origin).pathname);
@@ -1258,51 +1349,85 @@
       return null;
     }
 
-    // Chip placements: the detail page header (exact list path) and every
-    // user-list card. Smart list cards fall out via parseListPath. Stray
-    // chips (the SPA reused or repurposed a container) are removed at the
-    // end of each scan.
+    // Placements: chips on the list detail header and user-list cards,
+    // text suffixes on card-less surfaces (the watchlist page header and
+    // lane headings whose anchor resolves to a single list or watchlist;
+    // section groupings and smart lists fall out via the path parsers).
+    // Stray nodes (the SPA reused or repurposed a container) are removed
+    // at the end of each scan.
     function scan() {
       const placements = [];
-      const pageTarget = parseListPath(location.pathname);
-      if (pageTarget) {
+      const pageList = parseListPath(location.pathname);
+      if (pageList) {
         const headerLike = document.querySelector('.trakt-navbar-header-actions trakt-list-like-action');
         if (headerLike) {
-          placements.push({ likeAction: headerLike, target: pageTarget });
+          placements.push({ chip: { likeAction: headerLike }, target: pageList });
+        }
+      }
+      // The watchlist page header has no like action to clone (verified),
+      // so its count rides inline in the title, styled like the mode span.
+      const pageWatchlist = parseWatchlistPath(location.pathname);
+      const headerTitle = document.querySelector('.trakt-navbar-header-title');
+      if (pageWatchlist && headerTitle) {
+        const h1 = headerTitle.querySelector('h1');
+        const template = headerTitle.querySelector('span.meta-info:not(.' + COUNT_TEXT_CLASS + ')');
+        if (h1 && template) {
+          placements.push({
+            text: { template, parent: h1, styles: { display: 'inline-block', 'margin-left': '8px' } },
+            target: pageWatchlist,
+          });
         }
       }
       for (const card of document.querySelectorAll('.trakt-list-summary-card')) {
         const likeAction = card.querySelector('trakt-list-like-action');
         const target = likeAction ? cardTarget(card) : null;
         if (target) {
-          placements.push({ likeAction, target });
+          placements.push({ chip: { likeAction }, target });
+        }
+      }
+      for (const inset of document.querySelectorAll('.trakt-list-inset-title')) {
+        const anchor = inset.querySelector('.trakt-list-title a[href]');
+        const wrapper = inset.querySelector('.trakt-list-title-wrapper');
+        const template = wrapper ? wrapper.querySelector('span.title') : null;
+        if (!anchor || !template) {
+          continue;
+        }
+        const pathname = new URL(anchor.href, location.origin).pathname;
+        const target = parseListPath(pathname) || parseWatchlistPath(pathname);
+        if (target) {
+          placements.push({
+            text: { template, parent: wrapper, styles: { opacity: '0.6', 'font-weight': 'normal' } },
+            target,
+          });
         }
       }
       const placed = new Set();
       let needsBulk = false;
-      for (const { likeAction, target } of placements) {
+      for (const { chip, text, target } of placements) {
         const entry = cache.entries[target.key] || null;
         if (!entry || entryStale(entry)) {
-          // The bulk fetch goes first: it may prime this key (and the
-          // canonical username) in one call; the rescan it queues sends
-          // still-unresolved keys down the per-list path.
-          if (bulkStale()) {
+          if (target.kind === 'watchlist') {
+            resolveWatchlist(target.ownerSegment);
+          } else if (bulkStale()) {
+            // The bulk fetch goes first: it may prime this key (and the
+            // canonical username) in one call; the rescan it queues sends
+            // still-unresolved keys down the per-list path.
             needsBulk = true;
           } else {
             resolveSingle(target.ownerSegment, target.slug);
           }
         }
-        const chip = ensureChip(likeAction, target.key, entry);
-        if (chip) {
-          placed.add(chip);
+        const el = chip ? ensureChip(chip.likeAction, target.key, entry) : ensureCountText(text, target.key, entry);
+        if (el) {
+          placed.add(el);
         }
       }
       if (needsBulk) {
         resolveBulk();
       }
-      for (const chip of document.querySelectorAll('.' + CHIP_CLASS)) {
-        if (!placed.has(chip)) {
-          chip.remove();
+      for (const el of document.querySelectorAll('.' + CHIP_CLASS + ', .' + COUNT_TEXT_CLASS)) {
+        if (!placed.has(el)) {
+          el.remove();
         }
       }
     }

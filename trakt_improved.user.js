@@ -159,6 +159,25 @@
   // refreshes are GETs, so the hook cannot loop on them.
   const MUTATION_SETTLE_MS = 1000;
   const mutationCallbacks = [];
+
+  // Notify features that an API mutation happened: after the settle delay,
+  // run every mutation callback (isolated, mirroring the scan queue) and
+  // queue a scan. Called by the fetch hook below for the app's own writes,
+  // and directly by features whose own mutating requests use the sandbox
+  // fetch, which the hook never sees.
+  function notifyMutation() {
+    setTimeout(() => {
+      for (const callback of mutationCallbacks) {
+        try {
+          callback();
+        } catch (e) {
+          warn('Mutation callback failed; other callbacks continue', e);
+        }
+      }
+      queueScan();
+    }, MUTATION_SETTLE_MS);
+  }
+
   const nativeFetch = pageWindow.fetch;
   pageWindow.fetch = function (...args) {
     const result = nativeFetch.apply(this, args);
@@ -169,17 +188,7 @@
       if (typeof url === 'string' && url.startsWith(API_BASE) && method !== 'GET') {
         result.then(response => {
           if (response.ok) {
-            setTimeout(() => {
-              // Isolate features from each other, mirroring the scan queue.
-              for (const callback of mutationCallbacks) {
-                try {
-                  callback();
-                } catch (e) {
-                  warn('Mutation callback failed; other callbacks continue', e);
-                }
-              }
-              queueScan();
-            }, MUTATION_SETTLE_MS);
+            notifyMutation();
           }
         }, () => {
           // The app's own error handling owns failed mutations.

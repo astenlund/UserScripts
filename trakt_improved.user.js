@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.9
+// @version      1.10
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -527,8 +527,13 @@
           opacity: 1 !important;
           filter: brightness(0.25) saturate(0.25) !important;
         }
-        :root.${LIGHT_CLASS} .${FADE_CLASS} .trakt-card-cover,
-        :root.${LIGHT_CLASS} .${FADE_CLASS} .trakt-summary-card-background img {
+        /* :where() keeps the theme scope at zero specificity so this
+           override still wins over the dark base above purely by source
+           order, while the hover reveal below (one extra pseudo-class)
+           outranks both; a bare :root.${LIGHT_CLASS} prefix would outrank
+           the hover rules and make faded cards unhoverable on light. */
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-cover,
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-summary-card-background img {
           opacity: 0.25 !important;
           filter: saturate(0.75) !important;
         }

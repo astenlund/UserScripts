@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.4
+// @version      1.5
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1548,8 +1548,22 @@
 
     function removeRow() {
       if (row !== null) {
+        const menu = row.parentElement;
         row.remove();
+        if (menu !== null) {
+          menu.style.removeProperty('max-height');
+        }
         row = null;
+      }
+    }
+
+    // The app caps the menu at the height of its four native rows, so the
+    // injected fifth row would otherwise force a scrollbar. Inline styles
+    // survive Svelte re-renders; the popup node is destroyed on close, so
+    // the override dies with it (and removeRow restores it early).
+    function growMenu(menu) {
+      if (menu.scrollHeight > menu.clientHeight) {
+        menu.style.setProperty('max-height', menu.scrollHeight + 'px', 'important');
       }
     }
 
@@ -1662,6 +1676,7 @@
       const existing = located.menu.querySelector('.' + ROW_CLASS);
       if (existing) {
         row = existing;
+        growMenu(located.menu);
         renderRow();
         return;
       }
@@ -1675,6 +1690,7 @@
       }
       located.menu.appendChild(built);
       row = built;
+      growMenu(located.menu);
       renderRow();
     }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.3
+// @version      1.4
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1458,6 +1458,354 @@
       cache.invalidatedAt = Date.now();
       persistCache();
     });
+
+    scanCallbacks.push(scan);
+  })();
+
+  // ---------------------------------------------------------------------
+  // Feature: Uninterested list truncate
+  // One-click "Truncate" entry in the kebab popup menu of the owner's
+  // Uninterested list, trimming it to its newest TRUNCATE_LIMIT items by
+  // removing the oldest by listed_at. Personal by design: the target list
+  // is hardcoded; for any other user of the script the entry can appear
+  // only on the owner's public list surfaces, and a click fails harmlessly
+  // against their own account, where the slug does not exist.
+  // ---------------------------------------------------------------------
+
+  (function initListTruncate() {
+    const TRUNCATE_OWNER = 'thefork';
+    const TRUNCATE_SLUG = 'uninterested-61febd75-9914-44d8-9460-894a29968281';
+    const TRUNCATE_LIMIT = 1000;
+    const PAGE_LIMIT = 1000;
+    const CLICK_FRESH_MS = 3000;
+    const LABEL_RESET_MS = 5000;
+    const ROW_CLASS = 'tlt-row';
+    const TYPE_KEYS = { movie: 'movies', show: 'shows', season: 'seasons', episode: 'episodes', person: 'people' };
+    const ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+      + '<circle cx="6" cy="6" r="3"/>'
+      + '<circle cx="6" cy="18" r="3"/>'
+      + '<line x1="20" y1="4" x2="8.12" y2="15.88"/>'
+      + '<line x1="14.47" y1="14.48" x2="20" y2="20"/>'
+      + '<line x1="8.12" y1="8.12" x2="12" y2="12"/>'
+      + '</svg>';
+
+    // Kebab-click record: the popup carries no back-reference to its list,
+    // so identity is captured at click time from the button's surroundings.
+    // Only the click time needs recording; only one list can ever be armed.
+    let armedAt = 0;
+
+    // Run state machine; rows are pure renderers of this state.
+    // 'idle' | 'running' | a terminal label string.
+    let state = 'idle';
+    let running = false;
+    let postAttempted = false;
+    let row = null;
+    let resetTimer = 0;
+    let authWarned = false;
+    let shapeWarned = false;
+
+    function isTargetListPath(pathname) {
+      const segments = pathname.split('/').filter(Boolean);
+      if (segments.length !== 4 || segments[0] !== 'users' || segments[2] !== 'lists') {
+        return false;
+      }
+      return (segments[1] === 'me' || segments[1] === TRUNCATE_OWNER) && segments[3] === TRUNCATE_SLUG;
+    }
+
+    // Card and lane kebabs resolve through their container's anchors; a
+    // header kebab (inside .trakt-navbar-header-actions only) resolves
+    // through the page path. The scoping matters: item cards on the list
+    // detail page carry their own kebabs and must not arm the record.
+    function kebabTargetsList(button) {
+      const context = button.closest('.trakt-list-summary-card') || button.closest('.trakt-list-inset-title');
+      if (context) {
+        for (const anchor of context.querySelectorAll('a[href]')) {
+          if (isTargetListPath(new URL(anchor.href, location.origin).pathname)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      return !!button.closest('.trakt-navbar-header-actions') && isTargetListPath(location.pathname);
+    }
+
+    // Capture phase, so the record exists before the app's own handlers
+    // run, regardless of how they handle propagation.
+    document.addEventListener('click', e => {
+      if (!(e.target instanceof Element)) return;
+      const button = e.target.closest('button.trakt-popup-menu-button');
+      if (!button) return;
+      if (kebabTargetsList(button)) {
+        armedAt = Date.now();
+      } else {
+        // Also removes an existing row: a new popup implies a kebab click,
+        // so this covers the SPA reusing one popup container for another
+        // list's menu, which the row cannot detect from the popup itself.
+        armedAt = 0;
+        removeRow();
+      }
+    }, true);
+
+    function removeRow() {
+      if (row !== null) {
+        row.remove();
+        row = null;
+      }
+    }
+
+    function rowAttached() {
+      return row !== null && row.isConnected;
+    }
+
+    function currentLabel() {
+      if (state === 'running') return 'Truncating...';
+      if (state === 'idle') return 'Truncate';
+      return state;
+    }
+
+    function renderRow() {
+      if (!rowAttached()) return;
+      const labelEl = row.querySelector('[data-tlt-label]');
+      if (labelEl) {
+        labelEl.textContent = currentLabel();
+      }
+      row.style.pointerEvents = state === 'running' ? 'none' : '';
+      row.style.opacity = state === 'running' ? '0.6' : '';
+    }
+
+    function setState(next) {
+      state = next;
+      if (resetTimer) {
+        // A pending terminal reset must not flip the label mid-run.
+        clearTimeout(resetTimer);
+        resetTimer = 0;
+      }
+      const terminal = next !== 'idle' && next !== 'running';
+      if (terminal) {
+        resetTimer = setTimeout(() => {
+          resetTimer = 0;
+          state = 'idle';
+          renderRow();
+        }, LABEL_RESET_MS);
+        if (!rowAttached()) {
+          // The row label is the only UI surface; when it is gone the
+          // outcome (success included) must not be lost.
+          warn('Truncate outcome (no row visible): ' + next);
+        }
+      }
+      renderRow();
+    }
+
+    // The popup markup has no stable identity; locate the Share row as a
+    // childless visible element reading "Share" whose ancestor has a
+    // sibling subtree containing another known row label.
+    function locateShareRow() {
+      const leaves = [...document.querySelectorAll('div, p, span, button, a, li')].filter(el =>
+        el.children.length === 0 && el.textContent.trim() === 'Share' && el.offsetParent !== null);
+      for (const leaf of leaves) {
+        let node = leaf;
+        while (node.parentElement && node.parentElement !== document.body) {
+          const parent = node.parentElement;
+          const siblings = [...parent.children].filter(c => c !== node);
+          if (siblings.some(s => s.textContent.includes('Reorder') || s.textContent.includes('Delete'))) {
+            return { shareRow: node, menu: parent };
+          }
+          node = parent;
+        }
+      }
+      return null;
+    }
+
+    // Clone the Share row so the app's Svelte-scoped styles keep applying;
+    // injected nodes are outside Svelte's virtual DOM, so the marker class
+    // survives re-renders. Cloned rows carry no Svelte listeners.
+    function buildRow(shareRow) {
+      const clone = shareRow.cloneNode(true);
+      const labelEl = [...clone.querySelectorAll('*')].find(el =>
+        el.children.length === 0 && el.textContent.trim() === 'Share');
+      const svg = clone.querySelector('svg');
+      if (!labelEl || !svg) {
+        return null;
+      }
+      clone.classList.add(ROW_CLASS);
+      labelEl.setAttribute('data-tlt-label', '1');
+      const iconHost = svg.parentElement;
+      svg.remove();
+      iconHost.insertAdjacentHTML('afterbegin', ICON);
+      clone.addEventListener('click', e => {
+        // Intended to keep the app from closing the popup on our click; an
+        // assumption about the app's dismissal mechanism. The design does
+        // not depend on it (run state covers a closed popup).
+        e.stopPropagation();
+        run();
+      });
+      return clone;
+    }
+
+    function scan() {
+      if (row !== null && !row.isConnected) {
+        row = null;
+      }
+      if (rowAttached()) {
+        renderRow();
+        return;
+      }
+      if (Date.now() - armedAt >= CLICK_FRESH_MS) {
+        // The freshness window expires records whose popup never appeared.
+        return;
+      }
+      const located = locateShareRow();
+      if (!located) {
+        // Popup not rendered yet; silent, record expiry covers never-appearing.
+        return;
+      }
+      const existing = located.menu.querySelector('.' + ROW_CLASS);
+      if (existing) {
+        row = existing;
+        renderRow();
+        return;
+      }
+      const built = buildRow(located.shareRow);
+      if (built === null) {
+        if (!shapeWarned) {
+          shapeWarned = true;
+          warn('Popup row shape unrecognized; cannot inject Truncate');
+        }
+        return;
+      }
+      located.menu.appendChild(built);
+      row = built;
+      renderRow();
+    }
+
+    async function truncate(auth) {
+      const items = [];
+      let expectedTotal = null;
+      for (let page = 1; ; page++) {
+        const url = apiUrl('/users/me/lists/' + TRUNCATE_SLUG + '/items');
+        url.searchParams.set('page', page);
+        url.searchParams.set('limit', PAGE_LIMIT);
+        const response = await apiGet(auth, url);
+        const batch = await response.json();
+        if (!Array.isArray(batch)) {
+          throw new Error('Unexpected items response shape');
+        }
+        if (page === 1) {
+          expectedTotal = parseInt(response.headers.get('X-Pagination-Item-Count'), 10);
+        }
+        items.push(...batch);
+        const pageCount = parseInt(response.headers.get('X-Pagination-Page-Count'), 10);
+        if (batch.length === 0) break;
+        if (Number.isFinite(pageCount) ? page >= pageCount : batch.length < PAGE_LIMIT) break;
+      }
+      // Completeness guard, fail closed (missing or unparsable header
+      // included): the selection math must never run on a silently
+      // truncated walk, because the removal is irreversible.
+      if (!Number.isFinite(expectedTotal) || expectedTotal !== items.length) {
+        throw new Error('Item count mismatch: fetched ' + items.length + ', header says ' + expectedTotal);
+      }
+      // The sort key IS the trim policy, so it fails closed too. The sort
+      // itself is lexicographic: fixed-width ISO 8601 UTC strings compare
+      // lexicographically in chronological order.
+      for (const item of items) {
+        if (typeof item.listed_at !== 'string' || Number.isNaN(Date.parse(item.listed_at))) {
+          throw new Error('Item with missing or unparsable listed_at');
+        }
+      }
+      items.sort((a, b) => (a.listed_at < b.listed_at ? -1 : a.listed_at > b.listed_at ? 1 : 0));
+      if (items.length <= TRUNCATE_LIMIT) {
+        return 'Already at ' + TRUNCATE_LIMIT.toLocaleString('en-US') + ' or less';
+      }
+      // No dedupe of the selection, deliberately: trakt ids are per-type
+      // namespaces (a movie and a show can share an id), so id-only dedupe
+      // would wrongly collapse distinct entries, and concurrent list edits
+      // during the walk are arithmetically self-compensating for the
+      // removal count, with the completeness guard as the backstop.
+      const excess = items.slice(0, items.length - TRUNCATE_LIMIT);
+      const payload = { movies: [], shows: [], seasons: [], episodes: [], people: [] };
+      let sent = 0;
+      for (const item of excess) {
+        const key = TYPE_KEYS[item.type];
+        const id = item[item.type] && item[item.type].ids ? item[item.type].ids.trakt : undefined;
+        if (!key || typeof id !== 'number') {
+          // Better to under-trim than to send a malformed payload.
+          warn('Truncate skipping item with unrecognized type or missing trakt id:', item.type);
+          continue;
+        }
+        payload[key].push({ ids: { trakt: id } });
+        sent++;
+      }
+      if (sent === 0) {
+        throw new Error('Every selected item was skipped; nothing sendable');
+      }
+      postAttempted = true;
+      const url = apiUrl('/users/me/lists/' + TRUNCATE_SLUG + '/items/remove');
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${auth.token}`,
+          'trakt-api-version': '2',
+          'trakt-api-key': auth.clientId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url.pathname}`);
+      }
+      const body = await response.json();
+      const deleted = body && typeof body === 'object' ? body.deleted : null;
+      if (!deleted || typeof deleted !== 'object') {
+        throw new Error('Unexpected remove response shape');
+      }
+      // The label never reports the requested count as if it were the
+      // server-confirmed count.
+      const n = Object.values(TYPE_KEYS).reduce(
+        (sum, key) => sum + (typeof deleted[key] === 'number' ? deleted[key] : 0), 0);
+      if (n < sent) {
+        warn('Truncate partial removal: ' + n + ' of ' + sent + ' deleted; not_found:', body.not_found);
+        return 'Removed ' + n.toLocaleString('en-US') + ' of ' + sent.toLocaleString('en-US');
+      }
+      return 'Removed ' + n.toLocaleString('en-US');
+    }
+
+    async function run() {
+      if (running) return;
+      running = true;
+      postAttempted = false;
+      setState('running');
+      try {
+        const auth = readAuth();
+        if (!auth) {
+          if (!authWarned) {
+            authWarned = true;
+            warn('No Trakt access token in localStorage; cannot truncate until login');
+          }
+          setState('Failed, see console');
+          return;
+        }
+        setState(await truncate(auth));
+      } catch (e) {
+        const status = /^HTTP (\d+) /.exec(String(e && e.message));
+        if (postAttempted && (!status || status[1].startsWith('5'))) {
+          // Indeterminate: the server may still have applied the removal.
+          warn('Truncate failed; the removal may have been applied server-side. Clicking again is safe: every run recomputes from a fresh walk.', e);
+        } else {
+          warn('Truncate failed' + (postAttempted ? '' : ' before anything was removed'), e);
+        }
+        setState('Failed, see console');
+      } finally {
+        if (postAttempted) {
+          // Exactly once per settled POST, on every outcome class: the
+          // sandbox fetch bypasses the mutation hook, so the pipeline is
+          // notified explicitly and the count chips refresh. A 4xx that
+          // changed nothing merely costs one redundant refresh.
+          notifyMutation();
+        }
+        running = false;
+      }
+    }
 
     scanCallbacks.push(scan);
   })();

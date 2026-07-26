@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.2
+// @version      1.3
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1394,7 +1394,16 @@
         }
         const pathname = new URL(anchor.href, location.origin).pathname;
         const target = parseListPath(pathname) || parseWatchlistPath(pathname);
-        if (target) {
+        if (!target) {
+          continue;
+        }
+        // A heading with its own like action (a list rendered as a lane)
+        // takes the chip, matching the detail header; like-less headings
+        // (the watchlist lane) keep the text suffix.
+        const likeAction = inset.querySelector('trakt-list-like-action');
+        if (likeAction) {
+          placements.push({ chip: { likeAction }, target });
+        } else {
           placements.push({
             text: { template, parent: wrapper, styles: { opacity: '0.6', 'font-weight': 'normal' } },
             target,

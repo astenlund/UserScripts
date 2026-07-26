@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.5
+// @version      1.6
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -204,6 +204,8 @@
   // Feature: fade filters
   // Restores fade/dim filtering: adds a Fade section to the filter pane and
   // fades watched/started/watchlisted/listed posters, with hover-to-reveal.
+  // Supersedes the app's own watched-item fade (is-deemphasized), which is
+  // neutralized so the two treatments never stack.
   // ---------------------------------------------------------------------
 
   (function initFadeFilters() {
@@ -488,6 +490,19 @@
       // !important throughout: the app's Svelte-scoped selectors (e.g.
       // .trakt-card-cover.svelte-x) beat plain class rules on specificity.
       style.textContent = `
+        /* The app fades watched posters itself (is-deemphasized drops
+           .trakt-card-cover-image to var(--de-emphasized-opacity), twice:
+           the class sits on both the wrapper div and the img). Neutralize
+           it so the fade filters below are the only fade in play and
+           watched items don't fade twice. Deliberately broader than the
+           app's own trakt-default-media-item scope so new card containers
+           gaining the class stay covered; overriding the variable instead
+           would bleed into unrelated deemphasis (non-current seasons,
+           drag placeholders). */
+        .is-deemphasized .trakt-card-cover-image,
+        .is-deemphasized.trakt-card-cover-image {
+          opacity: 1 !important;
+        }
         .${FADE_CLASS} .trakt-card-cover, .${FADE_CLASS} .trakt-card-footer,
         .${FADE_CLASS} .trakt-summary-card-details,
         .${FADE_CLASS} .trakt-summary-card-bottom-bar,
@@ -510,16 +525,21 @@
         .${FADE_CLASS} .trakt-card-action-bar {
           filter: brightness(0.35) !important;
         }
-        .${FADE_CLASS}:hover .trakt-card-cover,
-        .${FADE_CLASS}:hover .trakt-summary-card-background img {
-          opacity: 1 !important;
-          filter: none !important;
-        }
-        .${FADE_CLASS}:hover .trakt-card-footer,
-        .${FADE_CLASS}:hover .trakt-summary-card-details,
-        .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
-        .${FADE_CLASS}:hover .trakt-card-action-bar {
-          filter: none !important;
+        /* Hover-to-reveal only on fine pointers (same gate the app uses):
+           on touch screens :hover sticks after a tap, leaving items
+           permanently unfaded. */
+        @media (hover: hover) and (pointer: fine) {
+          .${FADE_CLASS}:hover .trakt-card-cover,
+          .${FADE_CLASS}:hover .trakt-summary-card-background img {
+            opacity: 1 !important;
+            filter: none !important;
+          }
+          .${FADE_CLASS}:hover .trakt-card-footer,
+          .${FADE_CLASS}:hover .trakt-summary-card-details,
+          .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
+          .${FADE_CLASS}:hover .trakt-card-action-bar {
+            filter: none !important;
+          }
         }
         .${HIDE_CLASS} {
           display: none !important;

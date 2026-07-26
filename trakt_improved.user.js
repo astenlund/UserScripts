@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.8
+// @version      1.9
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -219,6 +219,7 @@
     const PAGE_LIMIT = 1000;
     const FADE_CLASS = 'tff-fade';
     const HIDE_CLASS = 'tff-hide';
+    const LIGHT_CLASS = 'tff-light';
     const STYLE_ID = 'tff-style';
     const SECTION_ATTR = 'data-tff-section';
     const ROW_ATTR = 'data-tff-row';
@@ -515,22 +516,21 @@
            instead of overriding them, so hover restores exactly the native
            look rather than a brighter-than-normal one. */
         /* Theme-split fade: the fade must not depend on what's behind the
-           art. On the dark theme the surface is near-black, so darken the
-           art itself at full alpha (an alpha cut would read as gray fog).
-           On the light theme (the app stamps data-theme on <html>) the
-           surface is near-white, so keep full brightness and wash the art
-           out by alpha instead.
-           Unknown themes get the dark treatment, the safer default for
-           any future dark variant. */
+           art. On a dark surface darken the art itself at full alpha (an
+           alpha cut would read as gray fog); on a light surface keep full
+           brightness and wash the art out by alpha instead. The light
+           class is set by syncThemeClass below; anything not positively
+           light gets the dark treatment, the safer default for any
+           future dark theme variant. */
         .${FADE_CLASS} .trakt-card-cover,
         .${FADE_CLASS} .trakt-summary-card-background img {
           opacity: 1 !important;
-          filter: brightness(0.25) saturate(0.5) !important;
+          filter: brightness(0.25) saturate(0.25) !important;
         }
-        :root[data-theme="light"] .${FADE_CLASS} .trakt-card-cover,
-        :root[data-theme="light"] .${FADE_CLASS} .trakt-summary-card-background img {
+        :root.${LIGHT_CLASS} .${FADE_CLASS} .trakt-card-cover,
+        :root.${LIGHT_CLASS} .${FADE_CLASS} .trakt-summary-card-background img {
           opacity: 0.25 !important;
-          filter: saturate(0.5) !important;
+          filter: saturate(0.75) !important;
         }
         .${FADE_CLASS} .trakt-card-footer,
         .${FADE_CLASS} .trakt-summary-card-details,
@@ -715,6 +715,30 @@
         });
       }
     }
+
+    // Theme detection: the app stamps data-theme on <html>, but the value
+    // stays "system" when following the OS, so attribute matching cannot
+    // resolve the effective theme. Measure the rendered body background
+    // instead: canvas fillStyle parses any color the browser can render
+    // (oklch, color(srgb ...)), and a parse failure leaves the fill black,
+    // which resolves to dark, the fail-safe default.
+    const luminanceCanvas = document.createElement('canvas');
+    luminanceCanvas.width = luminanceCanvas.height = 1;
+
+    function syncThemeClass() {
+      const ctx = luminanceCanvas.getContext('2d');
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = '#000';
+      ctx.fillStyle = getComputedStyle(document.body).backgroundColor;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+      const light = 0.2126 * r + 0.7152 * g + 0.0722 * b > 127;
+      document.documentElement.classList.toggle(LIGHT_CLASS, light);
+    }
+
+    new MutationObserver(syncThemeClass).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeClass);
+    syncThemeClass();
 
     // Fade toggles apply in-memory immediately but persist only when the user
     // clicks the pane's save button ("Set filters as default", matched by

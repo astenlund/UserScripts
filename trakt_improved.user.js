@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.7
+// @version      1.8
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -525,12 +525,12 @@
         .${FADE_CLASS} .trakt-card-cover,
         .${FADE_CLASS} .trakt-summary-card-background img {
           opacity: 1 !important;
-          filter: brightness(0.2) saturate(0.35) !important;
+          filter: brightness(0.25) saturate(0.5) !important;
         }
         :root[data-theme="light"] .${FADE_CLASS} .trakt-card-cover,
         :root[data-theme="light"] .${FADE_CLASS} .trakt-summary-card-background img {
-          opacity: 0.35 !important;
-          filter: saturate(0.35) !important;
+          opacity: 0.25 !important;
+          filter: saturate(0.5) !important;
         }
         .${FADE_CLASS} .trakt-card-footer,
         .${FADE_CLASS} .trakt-summary-card-details,

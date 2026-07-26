@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.6
+// @version      1.7
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -514,10 +514,23 @@
            mask; styling the img INSIDE it composes with those (multiplies)
            instead of overriding them, so hover restores exactly the native
            look rather than a brighter-than-normal one. */
+        /* Theme-split fade: the fade must not depend on what's behind the
+           art. On the dark theme the surface is near-black, so darken the
+           art itself at full alpha (an alpha cut would read as gray fog).
+           On the light theme (the app stamps data-theme on <html>) the
+           surface is near-white, so keep full brightness and wash the art
+           out by alpha instead.
+           Unknown themes get the dark treatment, the safer default for
+           any future dark variant. */
         .${FADE_CLASS} .trakt-card-cover,
         .${FADE_CLASS} .trakt-summary-card-background img {
+          opacity: 1 !important;
+          filter: brightness(0.2) saturate(0.35) !important;
+        }
+        :root[data-theme="light"] .${FADE_CLASS} .trakt-card-cover,
+        :root[data-theme="light"] .${FADE_CLASS} .trakt-summary-card-background img {
           opacity: 0.35 !important;
-          filter: brightness(0.35) saturate(0.35) !important;
+          filter: saturate(0.35) !important;
         }
         .${FADE_CLASS} .trakt-card-footer,
         .${FADE_CLASS} .trakt-summary-card-details,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.11
+// @version      1.12
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -537,11 +537,14 @@
           opacity: 0.25 !important;
           filter: saturate(0.75) !important;
         }
+        /* The saturate term mutes the rating star's purple, which
+           brightness alone leaves colored against the grayed text;
+           gentler than the art's 0.25 so a hint of hue survives. */
         .${FADE_CLASS} .trakt-card-footer,
         .${FADE_CLASS} .trakt-summary-card-details,
         .${FADE_CLASS} .trakt-summary-card-bottom-bar,
         .${FADE_CLASS} .trakt-card-action-bar {
-          filter: brightness(0.35) !important;
+          filter: brightness(0.35) saturate(0.5) !important;
         }
         /* Same theme split for the text/rating layer: brightness pushes
            toward black, which on a light card RAISES contrast (the rating

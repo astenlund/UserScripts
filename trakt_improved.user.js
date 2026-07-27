@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.15
+// @version      1.16
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -504,11 +504,20 @@
         .is-deemphasized.trakt-card-cover-image {
           opacity: 1 !important;
         }
-        .${FADE_CLASS} .trakt-card-cover, .${FADE_CLASS} .trakt-card-footer,
-        .${FADE_CLASS} .trakt-summary-card-details,
-        .${FADE_CLASS} .trakt-summary-card-bottom-bar,
-        .${FADE_CLASS} .trakt-card-action-bar,
-        .${FADE_CLASS} .trakt-summary-card-background img {
+        /* Transitions live on the elements unconditionally, NOT scoped to
+           the fade class: a scoped transition vanishes in the same style
+           recalc that removes the class, so unfading would snap while
+           fading eased. The cover keeps the app's native outline-color
+           transition alongside ours since a transition override replaces
+           the whole list. */
+        .trakt-card-cover {
+          transition: opacity 250ms ease, filter 250ms ease, outline-color 0.15s ease-in-out !important;
+        }
+        .trakt-card-footer,
+        .trakt-summary-card-details,
+        .trakt-summary-card-bottom-bar,
+        .trakt-card-action-bar,
+        .trakt-summary-card-background img {
           transition: opacity 250ms ease, filter 250ms ease !important;
         }
         /* The backdrop layer div natively carries opacity .35 and a gradient

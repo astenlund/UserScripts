@@ -223,6 +223,14 @@
     const CACHE_VERSION = 3;
     const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
     const MARKER_PREFIX = 'trakt-marker:invalidate:';
+    const SELF_MARKER_KEY = MARKER_PREFIX + 'fork-scripts-quick-lists';
+    // This tab's own last marker bump. refresh() re-merges it at commit
+    // (the snapshot captured at sweep start would otherwise erase a bump
+    // recorded mid-sweep), and it must merge only this OWN value, never
+    // the key's live localStorage value: both tabs write the same key, so
+    // the live value may carry another tab's bump, which must stay foreign
+    // for its invalidation to trip this tab.
+    let selfMarkerValue = null;
     const MODE_KEY = 'trakt_toggler_discover';
     const CACHE_TTL_MS = 15 * 60 * 1000;
     const PAGE_LIMIT = 1000;
@@ -443,6 +451,18 @@
     let refreshInFlight = false;
     let lastFailureAt = 0;
     let forceRefresh = false;
+    // A failed forced sweep must not consume its trigger: refresh() clears
+    // forceRefresh before fetching and commits the marker snapshot even on
+    // total failure, so without this re-arm a failed post-write corrector
+    // would leave nothing but TTL age to retry on. Unlike forceRefresh,
+    // the re-armed flag respects the failure backoff.
+    let rearmedRefresh = false;
+    // Post-write refresh queueing: a sweep whose fetches predate a write
+    // would clobber the optimistic state when it commits, so a write that
+    // settles mid-sweep queues a fresh forced sweep instead of being
+    // silently dropped by the single-flight guard.
+    let pendingForcedRefresh = false;
+    let sweepStartedAt = 0;
 
     // A mutation-triggered refresh bypasses the failure backoff (see
     // refresh()): user actions are rare and deserve promptness. The shared
@@ -458,7 +478,8 @@
     async function refresh() {
       if (refreshInFlight) return;
       // A mutation-triggered refresh bypasses the failure backoff: user actions
-      // are rare and deserve promptness. Ordinary staleness still respects it.
+      // are rare and deserve promptness. Ordinary staleness and the re-armed
+      // retry after a failed forced sweep still respect it.
       if (!forceRefresh && Date.now() - lastFailureAt < RETRY_BACKOFF_MS) return;
       const auth = readAuth();
       if (!auth) {
@@ -466,8 +487,11 @@
         lastFailureAt = Date.now();
         return;
       }
+      const wasForced = forceRefresh || rearmedRefresh;
       forceRefresh = false;
+      rearmedRefresh = false;
       refreshInFlight = true;
+      sweepStartedAt = Date.now();
       try {
         const captured = currentMarkers();
         const [shows, progress, movies, watchlist, listed] = await Promise.allSettled([
@@ -511,13 +535,43 @@
           writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
           sets = buildSets(cache);
         }
+        // The snapshot was captured at sweep start (so an app action landing
+        // mid-refresh still triggers a follow-up), but this tab's own
+        // quick-toggle marker bump must never look foreign to this tab: merge
+        // it into whatever gets committed, or a bump recorded mid-sweep would
+        // be erased and re-trigger a pre-settle sweep here. Merge the tracked
+        // own value, not the key's live localStorage value (which may carry
+        // another tab's bump that must stay foreign), and never over a NEWER
+        // captured value: committing an older value over a foreign newer one
+        // would leave committed permanently behind localStorage and loop the
+        // sweep. Values are Date.now() strings, so compare numerically.
+        if (selfMarkerValue !== null && Number(captured[SELF_MARKER_KEY] || 0) <= Number(selfMarkerValue)) {
+          captured[SELF_MARKER_KEY] = selfMarkerValue;
+        }
         committedMarkers = captured;
         writeJson(MARKER_SNAPSHOT_KEY, captured);
-        if (anyFailed) lastFailureAt = now;
+        if (anyFailed) {
+          lastFailureAt = now;
+          if (wasForced) {
+            rearmedRefresh = true;
+          }
+        }
         if (changed) queueScan();
       } finally {
         refreshInFlight = false;
       }
+      if (pendingForcedRefresh) {
+        pendingForcedRefresh = false;
+        forceRefresh = true;
+        await refresh();
+      }
+    }
+
+    function queueRefresh() {
+      refresh().catch(e => {
+        warn('Refresh failed unexpectedly', e);
+        lastFailureAt = Date.now();
+      });
     }
 
     function injectStyles() {
@@ -734,11 +788,8 @@
       injectStyles();
       ensureFadeSection();
       applyFades();
-      if (forceRefresh || cacheStale() || markersChanged()) {
-        refresh().catch(e => {
-          warn('Refresh failed unexpectedly', e);
-          lastFailureAt = Date.now();
-        });
+      if (forceRefresh || rearmedRefresh || cacheStale() || markersChanged()) {
+        queueRefresh();
       }
     }
 
@@ -776,6 +827,76 @@
         writeJson(STATE_KEY, state);
       }
     });
+
+    // The full staleness condition for membership data mirrors the fade
+    // scan's own refresh trigger: TTL age alone would miss app-driven
+    // changes (a native Manage-lists tick sets the mutation-forced flag;
+    // another tab's change lands via the invalidation markers), leaving
+    // toggle icons wrong for the full TTL on non-/discover pages.
+    function membershipStale() {
+      return forceRefresh || rearmedRefresh || markersChanged()
+        || !cache.listed || Date.now() - cache.listed.fetchedAt > CACHE_TTL_MS;
+    }
+
+    quickLists.membershipState = () => {
+      if (!cache.listed) return 'absent';
+      return membershipStale() ? 'stale' : 'fresh';
+    };
+
+    // null strictly means "data exists but the name resolved to zero or
+    // multiple lists"; callers must gate on membershipState() !== 'absent'
+    // before consulting targets, so the two no-entry states stay distinct.
+    quickLists.getListTarget = name => {
+      if (!cache.listed || !cache.listed.targets[name]) return null;
+      const target = cache.listed.targets[name];
+      return { id: target.id, has: slugKey => target.slugs.includes(slugKey) };
+    };
+
+    // Cross-tab propagation for the toggles feature's sandbox-fetch writes,
+    // which other tabs' page-fetch hooks never see: bump a script-owned key
+    // under the app's invalidation-marker prefix (markersChanged() prefix-
+    // scans it in every tab). Recording the value into this tab's committed
+    // snapshot at bump time keeps the bump invisible here, so it cannot
+    // launch a pre-settle sweep in the tab that just wrote.
+    quickLists.bumpInvalidationMarker = () => {
+      const value = String(Date.now());
+      try {
+        localStorage.setItem(SELF_MARKER_KEY, value);
+      } catch {
+        // Bump is best-effort; other tabs heal on TTL without it.
+        return;
+      }
+      selfMarkerValue = value;
+      if (committedMarkers && typeof committedMarkers === 'object') {
+        committedMarkers[SELF_MARKER_KEY] = value;
+        writeJson(MARKER_SNAPSHOT_KEY, committedMarkers);
+      }
+    };
+
+    // Write-triggered flavor: waits the same settle window notifyMutation
+    // uses (the server needs time to reflect the write before a refetch,
+    // or the sweep reads pre-write state and stamps it fresh), rides the
+    // pending flag when the in-flight sweep cannot be trusted to have seen
+    // the write, and bypasses the backoff via forceRefresh. A sweep counts
+    // as covering the write only when it started AFTER the settle window
+    // closed: one that started inside the window may still have fetched
+    // pre-write state (one click, one sweep otherwise). Menu-open flavor:
+    // staleness-gated, respects backoff.
+    quickLists.refreshMembership = ({ writeTriggered = false } = {}) => {
+      if (!writeTriggered) {
+        if (membershipStale()) queueRefresh();
+        return;
+      }
+      const settledAt = Date.now();
+      setTimeout(() => {
+        if (refreshInFlight) {
+          if (sweepStartedAt < settledAt + MUTATION_SETTLE_MS) pendingForcedRefresh = true;
+        } else {
+          forceRefresh = true;
+          queueRefresh();
+        }
+      }, MUTATION_SETTLE_MS);
+    };
 
     scanCallbacks.push(scan);
   })();

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.16
-// @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
+// @version      1.17
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -218,24 +218,15 @@
     const CACHE_TTL_MS = 15 * 60 * 1000;
     const PAGE_LIMIT = 1000;
     const FADE_CLASS = 'tff-fade';
-    const HIDE_CLASS = 'tff-hide';
     const LIGHT_CLASS = 'tff-light';
     const STYLE_ID = 'tff-style';
     const SECTION_ATTR = 'data-tff-section';
     const ROW_ATTR = 'data-tff-row';
-    const HIDE_ROW_ATTR = 'data-tff-hide-row';
     const CATEGORIES = ['started', 'watched', 'watchlisted', 'listed'];
     const LABELS = { started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' };
-    // Hide rows injected into the NATIVE Display section for parity: the app
-    // already hides Watched/Watchlisted server-side; these hide Started/Listed
-    // client-side.
-    const HIDE_CATEGORIES = [
-      { stateKey: 'hideStarted', category: 'started', label: 'Started' },
-      { stateKey: 'hideListed', category: 'listed', label: 'Listed' },
-    ];
     const SAVE_BUTTON_SELECTOR = 'button[aria-label="Set filters as default"]';
 
-    const state = { watched: true, started: true, watchlisted: true, listed: true, hideStarted: false, hideListed: false };
+    const state = { watched: true, started: true, watchlisted: true, listed: true };
     const storedState = readJson(STATE_KEY);
     if (storedState && typeof storedState === 'object') {
       for (const key of Object.keys(state)) {
@@ -582,9 +573,6 @@
             filter: none !important;
           }
         }
-        .${HIDE_CLASS} {
-          display: none !important;
-        }
       `;
       document.head.appendChild(style);
     }
@@ -600,7 +588,7 @@
     // styling applies; cloned nodes carry no Svelte listeners, and the cloned
     // checkboxes still toggle natively.
     function buildFadeSection(displaySection) {
-      const templateRow = displaySection.querySelector(`div.trakt-filter:not([${HIDE_ROW_ATTR}])`);
+      const templateRow = displaySection.querySelector('div.trakt-filter');
       const section = displaySection.cloneNode(true);
       const title = section.querySelector('.display-title');
       const toggles = section.querySelector('.display-toggles');
@@ -642,38 +630,6 @@
       if (startedRow) startedRow.style.display = activeMode() === 'movie' ? 'none' : '';
     }
 
-    // Started/Listed hide rows appended to the NATIVE Display section, styled
-    // by the same cloned row markup as the Fade section's toggles.
-    function ensureHideRows() {
-      const displaySection = document.querySelector(`div.trakt-display-section:not([${SECTION_ATTR}])`);
-      if (!displaySection) return;
-      const toggles = displaySection.querySelector('.display-toggles');
-      const templateRow = displaySection.querySelector(`div.trakt-filter:not([${HIDE_ROW_ATTR}])`);
-      if (!toggles || !templateRow) return;
-      for (const { stateKey, category, label } of HIDE_CATEGORIES) {
-        let row = toggles.querySelector(`[${HIDE_ROW_ATTR}="${category}"]`);
-        if (!row) {
-          row = templateRow.cloneNode(true);
-          const labelEl = row.querySelector('span.secondary');
-          const input = row.querySelector('input[type=checkbox]');
-          if (!labelEl || !input) {
-            warn('Filter pane markup changed; cannot inject hide rows');
-            return;
-          }
-          row.setAttribute(HIDE_ROW_ATTR, category);
-          labelEl.textContent = label;
-          input.setAttribute('aria-label', 'Hide ' + label.toLowerCase());
-          input.checked = state[stateKey];
-          input.addEventListener('change', () => {
-            state[stateKey] = input.checked;
-            queueScan();
-          });
-          toggles.appendChild(row);
-        }
-        if (category === 'started') row.style.display = activeMode() === 'movie' ? 'none' : '';
-      }
-    }
-
     // A card's anchor reveals its granularity via query params: an `episode`
     // param marks an episode-specific card (Continue Watching, Calendar), a
     // `season` param without `episode` marks a season card, neither marks a
@@ -698,21 +654,15 @@
     // and Calendar surface unwatched episodes of started shows on purpose, so
     // dimming them would defeat those lanes. Season cards fade by the season's
     // own progress; show/movie cards by their slug.
-    // Hide wins over fade; both use the same granularity rules (episode cards
-    // exempt, season cards by season key).
     function applyFades() {
       const fadeCats = CATEGORIES.filter(cat => state[cat]);
-      const hideCats = HIDE_CATEGORIES.filter(({ stateKey }) => state[stateKey]).map(({ category }) => category);
       for (const card of document.querySelectorAll('div.trakt-card')) {
         const target = cardTarget(card);
         let fade = false;
-        let hide = false;
         if (target !== null && target.episode === null) {
           const key = target.season === null ? target.slug : `${target.slug}:s${target.season}`;
-          hide = hideCats.some(cat => sets[cat].has(key));
-          fade = !hide && fadeCats.some(cat => sets[cat].has(key));
+          fade = fadeCats.some(cat => sets[cat].has(key));
         }
-        card.classList.toggle(HIDE_CLASS, hide);
         card.classList.toggle(FADE_CLASS, fade);
       }
     }
@@ -729,11 +679,10 @@
 
     function scan() {
       if (!fadingActive()) {
-        document.querySelectorAll(`.${FADE_CLASS}, .${HIDE_CLASS}`).forEach(el => el.classList.remove(FADE_CLASS, HIDE_CLASS));
+        document.querySelectorAll(`.${FADE_CLASS}`).forEach(el => el.classList.remove(FADE_CLASS));
         return;
       }
       injectStyles();
-      ensureHideRows();
       ensureFadeSection();
       applyFades();
       if (forceRefresh || cacheStale() || markersChanged()) {

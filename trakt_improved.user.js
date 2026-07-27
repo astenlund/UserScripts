@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.18
+// @version      1.19
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -508,6 +508,7 @@
         .trakt-summary-card-details,
         .trakt-summary-card-bottom-bar,
         .trakt-card-action-bar,
+        .trakt-indicator-tags-container,
         .trakt-summary-card-background img {
           transition: opacity 250ms ease, filter 250ms ease !important;
         }
@@ -542,7 +543,8 @@
         .${FADE_CLASS} .trakt-card-footer,
         .${FADE_CLASS} .trakt-summary-card-details,
         .${FADE_CLASS} .trakt-summary-card-bottom-bar,
-        .${FADE_CLASS} .trakt-card-action-bar {
+        .${FADE_CLASS} .trakt-card-action-bar,
+        .${FADE_CLASS} .trakt-indicator-tags-container {
           filter: brightness(0.25) saturate(0.25) !important;
         }
         /* Same theme split for the text/rating layer: brightness pushes
@@ -552,7 +554,8 @@
         :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-footer,
         :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-summary-card-details,
         :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-summary-card-bottom-bar,
-        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-action-bar {
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-action-bar,
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-indicator-tags-container {
           opacity: 0.25 !important;
           filter: saturate(0.5) !important;
         }
@@ -568,7 +571,8 @@
           .${FADE_CLASS}:hover .trakt-card-footer,
           .${FADE_CLASS}:hover .trakt-summary-card-details,
           .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
-          .${FADE_CLASS}:hover .trakt-card-action-bar {
+          .${FADE_CLASS}:hover .trakt-card-action-bar,
+          .${FADE_CLASS}:hover .trakt-indicator-tags-container {
             opacity: 1 !important;
             filter: none !important;
           }

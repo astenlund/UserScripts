@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.10
+// @version      1.11
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -543,6 +543,17 @@
         .${FADE_CLASS} .trakt-card-action-bar {
           filter: brightness(0.35) !important;
         }
+        /* Same theme split for the text/rating layer: brightness pushes
+           toward black, which on a light card RAISES contrast (the rating
+           star stayed vivid purple), so light washes by alpha instead,
+           in lockstep with the art above. */
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-footer,
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-summary-card-details,
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-summary-card-bottom-bar,
+        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-action-bar {
+          opacity: 0.25 !important;
+          filter: saturate(0.5) !important;
+        }
         /* Hover-to-reveal only on fine pointers (same gate the app uses):
            on touch screens :hover sticks after a tap, leaving items
            permanently unfaded. */
@@ -556,6 +567,7 @@
           .${FADE_CLASS}:hover .trakt-summary-card-details,
           .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
           .${FADE_CLASS}:hover .trakt-card-action-bar {
+            opacity: 1 !important;
             filter: none !important;
           }
         }

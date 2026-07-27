@@ -200,6 +200,15 @@
     return result;
   };
 
+  // Shared surface between the fade feature (which owns the membership
+  // sweep) and the quick list toggles feature (which renders and writes
+  // against it). The list names are resolved by display name, not slug:
+  // the Uninterested list's slug is UUID-suffixed. Names are user config,
+  // edited in-source; the ICONS table in the toggles feature is keyed by
+  // these same names, so a rename must touch both.
+  const QUICK_LIST_NAMES = ['Anticipated', 'Uninterested'];
+  const quickLists = {};
+
   // ---------------------------------------------------------------------
   // Feature: fade filters
   // Restores fade/dim filtering: adds a Fade section to the filter pane and
@@ -211,7 +220,7 @@
   (function initFadeFilters() {
     const STATE_KEY = 'trakt-fade-filters';
     const CACHE_KEY = 'trakt-fade-cache';
-    const CACHE_VERSION = 2;
+    const CACHE_VERSION = 3;
     const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
     const MARKER_PREFIX = 'trakt-marker:invalidate:';
     const MODE_KEY = 'trakt_toggler_discover';
@@ -234,15 +243,21 @@
       }
     }
 
-    // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> }, under
-    // a top-level version stamp so a format change forces a refetch instead of
-    // serving entries the new matching logic misreads.
+    // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> };
+    // the listed record additionally carries { counts, targets } (see
+    // fetchListedData). All under a top-level version stamp so a format
+    // change forces a refetch instead of serving entries the new matching
+    // logic misreads.
     function normalizeCache(raw) {
       const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
       const cache = {};
       for (const cat of CATEGORIES) {
         const rec = versionOk ? raw[cat] : null;
         cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
+      }
+      if (cache.listed && (typeof cache.listed.counts !== 'object' || cache.listed.counts === null
+        || typeof cache.listed.targets !== 'object' || cache.listed.targets === null)) {
+        cache.listed = null;
       }
       return cache;
     }
@@ -337,14 +352,44 @@
       return progress;
     }
 
-    async function fetchListedItems(auth) {
+    // Per-list results instead of a flat merge: the merged mapped slugs
+    // feed the fade sets as before; the per-slug list counts make removal
+    // unfade correctly (an item on two lists stays faded when it leaves
+    // one); the exact membership of the quick-toggle target lists drives
+    // the menu entries. Exact membership counts only items whose own type
+    // is show/movie: a season sitting in a list does not make its show a
+    // member, because the toggle operates on the show itself. A name that
+    // resolves to zero or multiple lists yields a null target (fail closed:
+    // writing to an arbitrarily-picked list is worse than a missing entry).
+    async function fetchListedData(auth) {
       const lists = await fetchAll(auth, '/users/me/lists');
+      const withIds = lists.filter(list => list.ids && list.ids.trakt !== undefined);
       const perList = await Promise.all(
-        lists
-          .filter(list => list.ids && list.ids.trakt !== undefined)
-          .map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
+        withIds.map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
       );
-      return perList.flat();
+      const counts = {};
+      const merged = new Set();
+      for (const items of perList) {
+        const mapped = new Set(items.map(itemSlug).filter(Boolean));
+        for (const slug of mapped) {
+          counts[slug] = (counts[slug] || 0) + 1;
+          merged.add(slug);
+        }
+      }
+      const targets = {};
+      for (const name of QUICK_LIST_NAMES) {
+        const indices = withIds.map((list, i) => (list.name === name ? i : -1)).filter(i => i >= 0);
+        if (indices.length !== 1) {
+          targets[name] = null;
+          continue;
+        }
+        const exact = perList[indices[0]]
+          .filter(item => item.type === 'show' || item.type === 'movie')
+          .map(itemSlug)
+          .filter(Boolean);
+        targets[name] = { id: withIds[indices[0]].ids.trakt, slugs: exact };
+      }
+      return { slugs: [...merged], counts, targets };
     }
 
     // Watchlist/list items are heterogeneous: shows and movies contribute their
@@ -430,7 +475,7 @@
           fetchWatchedProgress(auth),
           fetchAll(auth, '/users/me/watched/movies'),
           fetchAll(auth, '/users/me/watchlist'),
-          fetchListedItems(auth),
+          fetchListedData(auth),
         ]);
         const now = Date.now();
         let anyFailed = false;
@@ -455,7 +500,7 @@
         }
 
         if (listed.status === 'fulfilled') {
-          cache.listed = { slugs: listed.value.map(itemSlug).filter(Boolean), fetchedAt: now };
+          cache.listed = Object.assign({}, listed.value, { fetchedAt: now });
           changed = true;
         } else {
           anyFailed = true;

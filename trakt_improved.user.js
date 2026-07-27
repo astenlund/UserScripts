@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.19
-// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
+// @version      1.20
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -88,17 +88,34 @@
   // 401/429/5xx) throws and feeds the caller's fallback path. fetch() resolves
   // on HTTP errors, so response.ok is checked explicitly; a 401 is how an
   // expired token shows up.
+  function authHeaders(auth) {
+    return {
+      'Authorization': `Bearer ${auth.token}`,
+      'trakt-api-version': '2',
+      'trakt-api-key': auth.clientId,
+    };
+  }
+
   async function apiGet(auth, url) {
     const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${auth.token}`,
-        'trakt-api-version': '2',
-        'trakt-api-key': auth.clientId,
-      },
+      headers: authHeaders(auth),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status} for ${url.pathname}`);
     return response;
+  }
+
+  // POST sibling of apiGet with one deliberate contract difference: the
+  // response comes back unjudged even on HTTP errors, because the write
+  // endpoints report per-item results in the body and each caller owns
+  // its own verdict (body-judged success, partial-failure reporting).
+  function apiPost(auth, url, payload) {
+    return fetch(url, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders(auth)),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
   }
 
   // Per-key transient-failure gate shared by features that retry fetches
@@ -214,7 +231,9 @@
   // Restores fade/dim filtering: adds a Fade section to the filter pane and
   // fades watched/started/watchlisted/listed posters, with hover-to-reveal.
   // Supersedes the app's own watched-item fade (is-deemphasized), which is
-  // neutralized so the two treatments never stack.
+  // neutralized so the two treatments never stack. Also owns the membership
+  // sweep and cache that the quick list toggles feature consumes through
+  // the shared quickLists surface.
   // ---------------------------------------------------------------------
 
   (function initFadeFilters() {
@@ -251,21 +270,26 @@
       }
     }
 
-    // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> };
-    // the listed record additionally carries { counts, targets } (see
-    // fetchListedData). All under a top-level version stamp so a format
-    // change forces a refetch instead of serving entries the new matching
-    // logic misreads.
+    // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
+    // except listed, which carries { counts, targets, fetchedAt } (see
+    // fetchListedData): its slug set is exactly the keys of counts, so a
+    // separate slugs array would be redundant state to keep in sync. All
+    // under a top-level version stamp so a format change forces a refetch
+    // instead of serving entries the new matching logic misreads.
     function normalizeCache(raw) {
       const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
       const cache = {};
       for (const cat of CATEGORIES) {
         const rec = versionOk ? raw[cat] : null;
-        cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
-      }
-      if (cache.listed && (typeof cache.listed.counts !== 'object' || cache.listed.counts === null
-        || typeof cache.listed.targets !== 'object' || cache.listed.targets === null)) {
-        cache.listed = null;
+        if (cat === 'listed') {
+          const shapeOk = rec && typeof rec.fetchedAt === 'number'
+            && rec.counts && typeof rec.counts === 'object'
+            && rec.targets && typeof rec.targets === 'object'
+            && Object.values(rec.targets).every(t => t === null || (t && typeof t.id === 'number' && Array.isArray(t.slugs)));
+          cache[cat] = shapeOk ? rec : null;
+        } else {
+          cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
+        }
       }
       return cache;
     }
@@ -273,13 +297,21 @@
     function buildSets(cache) {
       const sets = {};
       for (const cat of CATEGORIES) {
-        sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
+        if (cat === 'listed') {
+          sets[cat] = new Set(cache.listed ? Object.keys(cache.listed.counts) : []);
+        } else {
+          sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
+        }
       }
       return sets;
     }
 
     const cache = normalizeCache(readJson(CACHE_KEY));
     let sets = buildSets(cache);
+
+    function persistCache() {
+      writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
+    }
 
     // Marker snapshot: captured at refresh start, committed when the refresh
     // commits, so an app action landing mid-refresh still triggers a follow-up.
@@ -376,12 +408,10 @@
         withIds.map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
       );
       const counts = {};
-      const merged = new Set();
       for (const items of perList) {
         const mapped = new Set(items.map(itemSlug).filter(Boolean));
         for (const slug of mapped) {
           counts[slug] = (counts[slug] || 0) + 1;
-          merged.add(slug);
         }
       }
       const targets = {};
@@ -397,7 +427,7 @@
           .filter(Boolean);
         targets[name] = { id: withIds[indices[0]].ids.trakt, slugs: exact };
       }
-      return { slugs: [...merged], counts, targets };
+      return { counts, targets };
     }
 
     // Watchlist/list items are heterogeneous: shows and movies contribute their
@@ -443,9 +473,12 @@
         .filter(Boolean);
     }
 
+    function categoryStale(cat) {
+      return !cache[cat] || Date.now() - cache[cat].fetchedAt > CACHE_TTL_MS;
+    }
+
     function cacheStale() {
-      const now = Date.now();
-      return CATEGORIES.some(cat => !cache[cat] || now - cache[cat].fetchedAt > CACHE_TTL_MS);
+      return CATEGORIES.some(cat => categoryStale(cat));
     }
 
     let refreshInFlight = false;
@@ -471,6 +504,24 @@
     mutationCallbacks.push(() => {
       forceRefresh = true;
     });
+
+    // The snapshot was captured at sweep start (so an app action landing
+    // mid-refresh still triggers a follow-up), but this tab's own
+    // quick-toggle marker bump must never look foreign to this tab: merge
+    // it into whatever gets committed, or a bump recorded mid-sweep would
+    // be erased and re-trigger a pre-settle sweep here. Merge the tracked
+    // own value, not the key's live localStorage value (which may carry
+    // another tab's bump that must stay foreign), and never over a NEWER
+    // captured value: committing an older value over a foreign newer one
+    // would leave committed permanently behind localStorage and loop the
+    // sweep. Values are Date.now() strings, so compare numerically.
+    function commitMarkerSnapshot(captured) {
+      if (selfMarkerValue !== null && Number(captured[SELF_MARKER_KEY] || 0) <= Number(selfMarkerValue)) {
+        captured[SELF_MARKER_KEY] = selfMarkerValue;
+      }
+      committedMarkers = captured;
+      writeJson(MARKER_SNAPSHOT_KEY, captured);
+    }
 
     // Single-flight, atomic per category: a category's record is replaced only
     // when every fetch it depends on succeeded; otherwise it keeps its stale
@@ -532,24 +583,10 @@
         }
 
         if (changed) {
-          writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
+          persistCache();
           sets = buildSets(cache);
         }
-        // The snapshot was captured at sweep start (so an app action landing
-        // mid-refresh still triggers a follow-up), but this tab's own
-        // quick-toggle marker bump must never look foreign to this tab: merge
-        // it into whatever gets committed, or a bump recorded mid-sweep would
-        // be erased and re-trigger a pre-settle sweep here. Merge the tracked
-        // own value, not the key's live localStorage value (which may carry
-        // another tab's bump that must stay foreign), and never over a NEWER
-        // captured value: committing an older value over a foreign newer one
-        // would leave committed permanently behind localStorage and loop the
-        // sweep. Values are Date.now() strings, so compare numerically.
-        if (selfMarkerValue !== null && Number(captured[SELF_MARKER_KEY] || 0) <= Number(selfMarkerValue)) {
-          captured[SELF_MARKER_KEY] = selfMarkerValue;
-        }
-        committedMarkers = captured;
-        writeJson(MARKER_SNAPSHOT_KEY, captured);
+        commitMarkerSnapshot(captured);
         if (anyFailed) {
           lastFailureAt = now;
           if (wasForced) {
@@ -834,8 +871,7 @@
     // another tab's change lands via the invalidation markers), leaving
     // toggle icons wrong for the full TTL on non-/discover pages.
     function membershipStale() {
-      return forceRefresh || rearmedRefresh || markersChanged()
-        || !cache.listed || Date.now() - cache.listed.fetchedAt > CACHE_TTL_MS;
+      return forceRefresh || rearmedRefresh || markersChanged() || categoryStale('listed');
     }
 
     quickLists.membershipState = () => {
@@ -899,13 +935,15 @@
     };
 
     // Optimistic patch, not a sweep: mutates the listed record in place,
-    // mirrors the change into the derived sets the renderer reads (the
-    // renderer never consults the cache; sets are otherwise rebuilt only
-    // inside refresh), persists WITHOUT touching fetchedAt (stamping a
-    // patch fresh would park an unreconciled write behind the full TTL;
-    // the untouched timestamp is what lets an interrupted session heal),
-    // and queues a rescan. Deliberately approximate: the post-write forced
-    // sweep replaces it with authoritative data shortly after.
+    // re-derives the listed set the renderer reads (the renderer never
+    // consults the cache; sets are otherwise rebuilt only inside refresh,
+    // and the set is by definition the keys of counts, so re-deriving
+    // beats hand-mirroring the transitions), persists WITHOUT touching
+    // fetchedAt (stamping a patch fresh would park an unreconciled write
+    // behind the full TTL; the untouched timestamp is what lets an
+    // interrupted session heal), and queues a rescan. Deliberately
+    // approximate: the post-write forced sweep replaces it with
+    // authoritative data shortly after.
     quickLists.applyListToggle = (name, slugKey, add) => {
       const listed = cache.listed;
       const target = listed && listed.targets[name];
@@ -915,8 +953,6 @@
       if (add) {
         exact.add(slugKey);
         listed.counts[slugKey] = (listed.counts[slugKey] || 0) + 1;
-        if (!listed.slugs.includes(slugKey)) listed.slugs.push(slugKey);
-        sets.listed.add(slugKey);
       } else {
         exact.delete(slugKey);
         const remaining = (listed.counts[slugKey] || 1) - 1;
@@ -924,12 +960,11 @@
           listed.counts[slugKey] = remaining;
         } else {
           delete listed.counts[slugKey];
-          listed.slugs = listed.slugs.filter(slug => slug !== slugKey);
-          sets.listed.delete(slugKey);
         }
       }
+      sets.listed = new Set(Object.keys(listed.counts));
       target.slugs = [...exact];
-      writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
+      persistCache();
       queueScan();
     };
 
@@ -1995,17 +2030,7 @@
       }
       postAttempted = true;
       const url = apiUrl('/users/me/lists/' + TRUNCATE_SLUG + '/items/remove');
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${auth.token}`,
-          'trakt-api-version': '2',
-          'trakt-api-key': auth.clientId,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
+      const response = await apiPost(auth, url, payload);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} for ${url.pathname}`);
       }
@@ -2076,18 +2101,21 @@
     const ENTRY_ATTR = 'data-qlt-entry';
     const HEIGHT_ATTR = 'data-qlt-prev-max-height';
     const CONTEXT_FRESH_MS = 2000;
+    const TOAST_ID = 'qlt-toast';
+    const TOAST_DISMISS_MS = 4000;
 
-    // Icon table keyed by list display name (renaming a list in
-    // QUICK_LIST_NAMES must touch this table too). Outline = not a member,
-    // filled = member. Paths are Material Symbols 24x24: hourglass for
-    // Anticipated, block/cancel-x for Uninterested.
+    // Icon table keyed from QUICK_LIST_NAMES via computed properties, so a
+    // rename in the shared constant cannot silently orphan an icon set;
+    // the per-icon meaning stays positional (first list, second list).
+    // Outline = not a member, filled = member. Paths are Material Symbols
+    // 24x24: hourglass for Anticipated, block/cancel-x for Uninterested.
     const iconSvg = path => '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="' + path + '"/></svg>';
     const ICONS = {
-      Anticipated: {
+      [QUICK_LIST_NAMES[0]]: {
         outline: iconSvg('M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5l-4-4V4h8v3.5l-4 4z'),
         filled: iconSvg('M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6z'),
       },
-      Uninterested: {
+      [QUICK_LIST_NAMES[1]]: {
         outline: iconSvg('M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z'),
         filled: iconSvg('M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z'),
       },
@@ -2096,6 +2124,12 @@
     let pendingContext = null;
     let warnedNoData = false;
     const warnedTargets = new Set();
+    const inFlight = new Set();
+    let toastTimer = 0;
+
+    // The membership key format shared with the fade cache (itemSlug's
+    // 'movie:<slug>' / 'show:<slug>'), built in one place.
+    const slugKeyOf = (type, slug) => `${type}:${slug}`;
 
     // Card identity: an eligible poster link has a bare two-segment
     // /movies/<slug> or /shows/<slug> pathname AND no season/episode query
@@ -2191,7 +2225,7 @@
       const anchor = mode === 'popup'
         ? rows.find(li => /^Watchlist\b/.test(li.textContent.trim())) || null
         : null;
-      const slugKey = `${context.type}:${context.slug}`;
+      const slugKey = slugKeyOf(context.type, context.slug);
       let insertAfter = anchor;
       for (const name of QUICK_LIST_NAMES) {
         const target = quickLists.getListTarget(name);
@@ -2275,7 +2309,7 @@
       for (const entry of root.querySelectorAll(`[${ENTRY_ATTR}]`)) {
         const target = quickLists.getListTarget(entry.getAttribute('data-qlt-list'));
         if (!target) continue;
-        const slugKey = `${entry.getAttribute('data-qlt-type')}:${entry.getAttribute('data-qlt-slug')}`;
+        const slugKey = slugKeyOf(entry.getAttribute('data-qlt-type'), entry.getAttribute('data-qlt-slug'));
         applyEntryState(entry, target.has(slugKey));
       }
       // Long-lived entries (the inline summary menu especially) are the
@@ -2285,10 +2319,128 @@
       quickLists.refreshMembership();
     }
 
-    // Completed in the writes task; a stub keeps this task self-contained.
     function onEntryClick(e) {
       e.preventDefault();
       e.stopPropagation();
+      const entry = e.currentTarget;
+      performToggle({
+        name: entry.getAttribute('data-qlt-list'),
+        type: entry.getAttribute('data-qlt-type'),
+        slug: entry.getAttribute('data-qlt-slug'),
+        title: entry.getAttribute('data-qlt-title'),
+        add: entry.getAttribute('data-qlt-member') !== '1',
+      });
+      closeMenus();
+    }
+
+    // The card popup dismisses itself on any trusted click, including one
+    // on an injected row, so it needs no help (synthetic events are
+    // ignored by its dismissal handlers, verified live). The inline
+    // summary menu does NOT close on row clicks; its underlay element
+    // accepts synthetic clicks, so dismiss through the app's own
+    // dismissal surface.
+    function closeMenus() {
+      const underlay = document.querySelector('.trakt-summary-actions-underlay');
+      if (underlay) {
+        for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+          underlay.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+        }
+      }
+    }
+
+    async function performToggle({ name, type, slug, title, add }) {
+      const target = quickLists.getListTarget(name);
+      if (!target) {
+        // A target can de-resolve between render and click (list deleted
+        // or renamed, sweep committed in between); a silent no-op would
+        // read as success since the menu closes either way.
+        warn(`Quick list toggle: list "${name}" no longer resolved; nothing written`);
+        showToast(`Couldn't update ${name}: list not found`);
+        return;
+      }
+      const slugKey = slugKeyOf(type, slug);
+      const flightKey = `${target.id}:${slugKey}`;
+      // Per list+item guard: without it, rapid toggle races can leave the
+      // server holding the opposite of the last click.
+      if (inFlight.has(flightKey)) return;
+      inFlight.add(flightKey);
+      let ok = false;
+      try {
+        quickLists.applyListToggle(name, slugKey, add);
+        try {
+          ok = await postToggle(target.id, type, slug, add);
+        } catch (e) {
+          warn(`Quick list ${add ? 'add' : 'remove'} failed for ${slugKey}`, e);
+        }
+      } finally {
+        // A leaked flight key would make the item untoggleable for the
+        // rest of the session.
+        inFlight.delete(flightKey);
+      }
+      // Every settled outcome notifies and reconciles: other mutation
+      // consumers (list counts) must hear about the write, an indeterminate
+      // failure may have landed server-side, and the forced sweep is what
+      // replaces the optimistic state with server truth on any page.
+      notifyMutation();
+      quickLists.bumpInvalidationMarker();
+      quickLists.refreshMembership({ writeTriggered: true });
+      if (!ok) {
+        quickLists.applyListToggle(name, slugKey, !add);
+        showToast(`Couldn't ${add ? 'add' : 'remove'} ${title ? `"${title}"` : 'item'} ${add ? 'to' : 'from'} ${name}`);
+      }
+    }
+
+    // Success is judged by the response body, not status alone (the
+    // truncate feature's precedent): these endpoints return 2xx with the
+    // rejected item under not_found. Add requires the item to have landed
+    // (added + existing >= 1). Remove succeeds on any 2xx: deleted 0 with
+    // the item in not_found means it was not in the list, which is exactly
+    // the end state the user asked for. A token missing at click time is a
+    // transport failure with no request sent. Every failure path logs its
+    // details; the toast carries only the headline.
+    async function postToggle(listId, type, slug, add) {
+      const auth = readAuth();
+      if (!auth) {
+        warn('Quick list toggle: no Trakt access token at write time; nothing sent');
+        return false;
+      }
+      const bodyKey = mediaPathSegment(type);
+      const url = apiUrl(`/users/me/lists/${listId}/items${add ? '' : '/remove'}`);
+      const response = await apiPost(auth, url, { [bodyKey]: [{ ids: { slug } }] });
+      if (!response.ok) {
+        warn(`Quick list ${add ? 'add' : 'remove'} got HTTP ${response.status} for ${type}:${slug}`);
+        return false;
+      }
+      if (!add) return true;
+      const body = await response.json();
+      const added = (body.added && body.added[bodyKey]) || 0;
+      const existing = (body.existing && body.existing[bodyKey]) || 0;
+      if (added + existing < 1) {
+        warn(`Quick list add rejected for ${type}:${slug}; response:`, body);
+        return false;
+      }
+      return true;
+    }
+
+    // One toast element; a new failure replaces the message and restarts
+    // the dismiss timer. Failures are rare enough that stacking is not
+    // worth building.
+    function showToast(message) {
+      let toast = document.getElementById(TOAST_ID);
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = TOAST_ID;
+        toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);'
+          + 'z-index:99999;padding:10px 18px;border-radius:8px;font-size:14px;'
+          + 'background:#222;color:#fff;box-shadow:0 2px 12px rgba(0,0,0,0.4);';
+        document.body.appendChild(toast);
+      }
+      const light = document.documentElement.classList.contains('tff-light');
+      toast.style.background = light ? '#fff' : '#222';
+      toast.style.color = light ? '#111' : '#fff';
+      toast.textContent = message;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.remove(), TOAST_DISMISS_MS);
     }
 
     function renderPopup() {

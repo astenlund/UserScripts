@@ -2066,6 +2066,250 @@
   })();
 
   // ---------------------------------------------------------------------
+  // Feature: quick list toggles
+  // One-click Anticipated/Uninterested membership toggles in the card
+  // popup menu and the summary-page actions menu, with optimistic fade
+  // sync. Membership data rides the fade feature's sweep via quickLists.
+  // ---------------------------------------------------------------------
+
+  (function initQuickListToggles() {
+    const ENTRY_ATTR = 'data-qlt-entry';
+    const HEIGHT_ATTR = 'data-qlt-prev-max-height';
+    const CONTEXT_FRESH_MS = 2000;
+
+    // Icon table keyed by list display name (renaming a list in
+    // QUICK_LIST_NAMES must touch this table too). Outline = not a member,
+    // filled = member. Paths are Material Symbols 24x24: hourglass for
+    // Anticipated, block/cancel-x for Uninterested.
+    const iconSvg = path => '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="' + path + '"/></svg>';
+    const ICONS = {
+      Anticipated: {
+        outline: iconSvg('M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5l-4-4V4h8v3.5l-4 4z'),
+        filled: iconSvg('M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6z'),
+      },
+      Uninterested: {
+        outline: iconSvg('M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z'),
+        filled: iconSvg('M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z'),
+      },
+    };
+
+    let pendingContext = null;
+    let warnedNoData = false;
+    const warnedTargets = new Set();
+
+    // Card identity: an eligible poster link has a bare two-segment
+    // /movies/<slug> or /shows/<slug> pathname AND no season/episode query
+    // param. The app encodes card granularity in query params on an
+    // otherwise bare pathname (see the fade feature's cardTarget), so the
+    // query check, not path depth, is what excludes season/episode cards;
+    // person cards fail the pathname check. Context type is the module
+    // mediaType() singular ('movie'|'show'), the same canonical form the
+    // cache keys use.
+    function cardContext(button) {
+      const card = button.closest('.trakt-card');
+      if (!card) return null;
+      for (const anchor of card.querySelectorAll('a[href]')) {
+        const url = new URL(anchor.href, location.origin);
+        const segments = url.pathname.split('/').filter(Boolean);
+        const type = segments.length === 2 ? mediaType(segments[0]) : null;
+        if (!type) continue;
+        if (url.searchParams.get('season') !== null || url.searchParams.get('episode') !== null) {
+          return null;
+        }
+        const label = button.getAttribute('aria-label') || '';
+        const match = label.match(/^Pop up menu for "(.*)"$/);
+        return { type, slug: segments[1], title: match ? match[1] : segments[1], at: Date.now() };
+      }
+      return null;
+    }
+
+    // Per-open lifecycle: every three-dot click tears down previously
+    // injected entries and this feature's height override before the new
+    // menu renders; the SPA can reuse one popup container across opens for
+    // different cards, so an inject-once marker would go stale. Capture
+    // phase, same as the truncate feature's kebab listener, so the record
+    // exists before the app's own handlers run.
+    document.addEventListener('click', e => {
+      if (!(e.target instanceof Element)) return;
+      const button = e.target.closest('button.trakt-popup-menu-button');
+      if (!button) return;
+      teardownPopupEntries();
+      pendingContext = cardContext(button);
+    }, true);
+
+    function teardownPopupEntries() {
+      for (const entry of document.querySelectorAll(`.trakt-popup-menu-container [${ENTRY_ATTR}]`)) {
+        entry.remove();
+      }
+      for (const menu of document.querySelectorAll(`.trakt-popup-menu-container [${HEIGHT_ATTR}]`)) {
+        const prev = menu.getAttribute(HEIGHT_ATTR);
+        menu.removeAttribute(HEIGHT_ATTR);
+        if (prev) {
+          menu.style.setProperty('max-height', prev);
+        } else {
+          menu.style.removeProperty('max-height');
+        }
+      }
+    }
+
+    // The popup container caps the menu height at its native rows, so the
+    // injected entries would otherwise clip or scroll. The truncate
+    // feature's growMenu is private to its IIFE and never arms on item
+    // cards, so this feature owns its own override, recording the prior
+    // inline value for the teardown restore.
+    function growPopupMenu(menu) {
+      if (menu.scrollHeight > menu.clientHeight) {
+        if (!menu.hasAttribute(HEIGHT_ATTR)) {
+          menu.setAttribute(HEIGHT_ATTR, menu.style.getPropertyValue('max-height'));
+        }
+        menu.style.setProperty('max-height', menu.scrollHeight + 'px', 'important');
+      }
+    }
+
+    function buildEntries(menu, context, mode) {
+      const state = quickLists.membershipState();
+      if (state !== 'fresh') {
+        // Menu-open heal: cold caches and app-driven staleness refetch
+        // without a /discover visit. Stale data still renders entries
+        // below; absent data cannot.
+        quickLists.refreshMembership();
+      }
+      if (state === 'absent') {
+        if (!warnedNoData) {
+          warn('Quick list toggles: no membership data yet; entries appear once the sweep lands');
+          warnedNoData = true;
+        }
+        return;
+      }
+      const rows = [...menu.querySelectorAll('li')].filter(li => !li.hasAttribute(ENTRY_ATTR));
+      if (rows.length === 0) return;
+      const template = rows[0];
+      // Placement: directly after the native Watchlist row when present
+      // (Watchlist is the app's own one-click membership toggle, so the
+      // injected toggles group with it), else first. The summary menu has
+      // no Watchlist row, so entries lead.
+      const anchor = mode === 'popup'
+        ? rows.find(li => /^Watchlist\b/.test(li.textContent.trim())) || null
+        : null;
+      const slugKey = `${context.type}:${context.slug}`;
+      let insertAfter = anchor;
+      for (const name of QUICK_LIST_NAMES) {
+        const target = quickLists.getListTarget(name);
+        if (!target) {
+          if (!warnedTargets.has(name)) {
+            warn(`Quick list toggles: list "${name}" missing or ambiguous; entry skipped`);
+            warnedTargets.add(name);
+          }
+          continue;
+        }
+        const entry = buildEntry(template, name, context, target.has(slugKey));
+        if (!entry) {
+          if (!warnedTargets.has('markup')) {
+            warn('Quick list toggles: menu row markup changed; entries skipped');
+            warnedTargets.add('markup');
+          }
+          continue;
+        }
+        if (insertAfter) {
+          insertAfter.after(entry);
+        } else {
+          menu.prepend(entry);
+        }
+        insertAfter = entry;
+      }
+      if (mode === 'popup') growPopupMenu(menu);
+    }
+
+    // Clones carry native styling and no Svelte listeners (same technique
+    // as the fade feature's cloned filter section). Row contract (verified
+    // in the live app this session): a menu row li contains an svg icon
+    // and a p label. Fails closed on drift: a row whose label or icon
+    // cannot be located must not ship, or it would keep the template's own
+    // label and icon while writing to a different list.
+    function buildEntry(template, name, context, member) {
+      const entry = template.cloneNode(true);
+      const label = entry.querySelector('p');
+      if (!label || !entry.querySelector('svg')) return null;
+      entry.setAttribute(ENTRY_ATTR, '1');
+      entry.setAttribute('data-qlt-list', name);
+      entry.setAttribute('data-qlt-type', context.type);
+      entry.setAttribute('data-qlt-slug', context.slug);
+      entry.setAttribute('data-qlt-title', context.title);
+      label.textContent = name;
+      applyEntryState(entry, member);
+      entry.style.cursor = 'pointer';
+      entry.addEventListener('click', onEntryClick);
+      return entry;
+    }
+
+    // Icon and captured action state always move together: the click acts
+    // on data-qlt-member, the same state the icon renders, so a sweep
+    // committing mid-open can never flip the click behind the icon.
+    // Idempotent by design: the shared body observer watches childList,
+    // and a DOM icon swap mutates children even when the markup is
+    // byte-identical, so an unguarded per-scan rewrite would requeue the
+    // scan it ran in and loop every frame. Skip when the entry already
+    // shows the target state. Only the svg node itself is swapped (the
+    // truncate feature's buildRow precedent): rewriting a parent's
+    // innerHTML would erase the label that shares the container. The
+    // replacement inherits the native svg's width/height so injected
+    // icons match their row neighbors.
+    function applyEntryState(entry, member) {
+      const next = member ? '1' : '0';
+      if (entry.getAttribute('data-qlt-member') === next) return;
+      entry.setAttribute('data-qlt-member', next);
+      const icons = ICONS[entry.getAttribute('data-qlt-list')];
+      const svg = entry.querySelector('svg');
+      if (!icons || !svg) return;
+      svg.insertAdjacentHTML('afterend', icons[member ? 'filled' : 'outline']);
+      const replacement = svg.nextElementSibling;
+      if (replacement) {
+        for (const attr of ['width', 'height']) {
+          if (svg.hasAttribute(attr)) replacement.setAttribute(attr, svg.getAttribute(attr));
+        }
+      }
+      svg.remove();
+    }
+
+    function refreshEntryStates(root) {
+      for (const entry of root.querySelectorAll(`[${ENTRY_ATTR}]`)) {
+        const target = quickLists.getListTarget(entry.getAttribute('data-qlt-list'));
+        if (!target) continue;
+        const slugKey = `${entry.getAttribute('data-qlt-type')}:${entry.getAttribute('data-qlt-slug')}`;
+        applyEntryState(entry, target.has(slugKey));
+      }
+      // Long-lived entries (the inline summary menu especially) are the
+      // one surface where an app-driven or cross-tab membership change
+      // must heal without a rebuild: the staleness-gated refresh is a
+      // no-op when data is fresh.
+      quickLists.refreshMembership();
+    }
+
+    // Completed in the writes task; a stub keeps this task self-contained.
+    function onEntryClick(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    function renderPopup() {
+      const container = document.querySelector('.trakt-popup-menu-container');
+      if (!container) return;
+      if (container.querySelector(`[${ENTRY_ATTR}]`)) {
+        refreshEntryStates(container);
+        return;
+      }
+      if (!pendingContext || Date.now() - pendingContext.at > CONTEXT_FRESH_MS) return;
+      const menu = container.querySelector('ul');
+      if (!menu) return;
+      buildEntries(menu, pendingContext, 'popup');
+    }
+
+    scanCallbacks.push(() => {
+      renderPopup();
+    });
+  })();
+
+  // ---------------------------------------------------------------------
   // Feature: classic rating labels
   // Restores the old ten-point rating scale in the rating hover preview:
   // the app's half-star values (0.5-5.0) become "7 - Good" style labels

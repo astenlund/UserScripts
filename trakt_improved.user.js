@@ -2304,8 +2304,51 @@
       buildEntries(menu, pendingContext, 'popup');
     }
 
+    // Summary-page identity comes from the pathname (bare two-segment
+    // /movies/<slug> or /shows/<slug>; detail URLs keep season selection in
+    // the query string, and episode pages have deeper paths). The title
+    // for user-facing text is the page heading, slug as fallback.
+    function summaryContext() {
+      const segments = location.pathname.split('/').filter(Boolean);
+      const type = segments.length === 2 ? mediaType(segments[0]) : null;
+      if (!type) return null;
+      const heading = document.querySelector('.trakt-summary-title h1');
+      const title = heading && heading.textContent.trim() ? heading.textContent.trim() : segments[1];
+      return { type, slug: segments[1], title, at: Date.now() };
+    }
+
+    // The inline actions menu (div.trakt-summary-actions holding li rows
+    // as DIRECT children; an outer wrapper shares the class and is an
+    // ANCESTOR of the menu, so a descendant-scoped li lookup would match
+    // the wrapper too and double-inject) grows naturally in its slider,
+    // so no height override applies here. SPA navigation can swap detail
+    // pages without rebuilding the menu DOM, so entries record their
+    // identity and are rebuilt whenever it no longer matches.
+    function renderSummary() {
+      const context = summaryContext();
+      for (const menu of document.querySelectorAll('div.trakt-summary-actions')) {
+        if (!menu.querySelector(':scope > li')) continue;
+        const existing = [...menu.querySelectorAll(`[${ENTRY_ATTR}]`)];
+        if (!context) {
+          existing.forEach(entry => entry.remove());
+          continue;
+        }
+        if (existing.length > 0
+          && (existing[0].getAttribute('data-qlt-slug') !== context.slug
+            || existing[0].getAttribute('data-qlt-type') !== context.type)) {
+          existing.forEach(entry => entry.remove());
+        }
+        if (menu.querySelector(`[${ENTRY_ATTR}]`)) {
+          refreshEntryStates(menu);
+        } else {
+          buildEntries(menu, context, 'summary');
+        }
+      }
+    }
+
     scanCallbacks.push(() => {
       renderPopup();
+      renderSummary();
     });
   })();
 

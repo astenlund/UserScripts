@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.17
-// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
+// @version      1.18
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1854,6 +1854,54 @@
           notifyMutation();
         }
         running = false;
+      }
+    }
+
+    scanCallbacks.push(scan);
+  })();
+
+  // ---------------------------------------------------------------------
+  // Feature: classic rating labels
+  // Restores the old ten-point rating scale in the rating hover preview:
+  // the app's half-star values (0.5-5.0) become "7 - Good" style labels
+  // (1 Weak Sauce ... 10 Totally Ninja). "No rating" passes through.
+  // ---------------------------------------------------------------------
+
+  (function initRatingLabels() {
+    const PREVIEW_SELECTOR = '.trakt-rating-stars .rating-preview';
+    const STAR_VALUE_PATTERN = /^[0-5](\.[05])?$/;
+    const LABELS = ['Weak Sauce', 'Terrible', 'Bad', 'Poor', 'Meh', 'Fair', 'Good', 'Great', 'Superb', 'Totally Ninja'];
+
+    // The shared body observer sees only childList changes, but the hover
+    // preview updates are pure text mutations, so each preview span gets its
+    // own observer. Svelte re-renders strip marker attributes from
+    // app-managed nodes; the WeakSet tracks instrumented spans instead, and
+    // a span destroyed by a re-render takes its observer with it.
+    const instrumented = new WeakSet();
+
+    // Half-stars times two is the classic ten-scale. Text outside the
+    // numeric pattern ("No rating", already-rewritten labels) passes
+    // through untouched, which also terminates the observer's own rewrite
+    // mutation without a reentrancy flag. The rewrite mutates the existing
+    // text node's data rather than replacing it (setting textContent
+    // detaches the node Svelte holds a reference to, freezing the preview:
+    // its later writes would land on the detached node, invisibly).
+    function rewrite(span) {
+      const node = span.firstChild;
+      if (!node || node.nodeType !== Node.TEXT_NODE) return;
+      const text = node.data.trim();
+      if (!STAR_VALUE_PATTERN.test(text)) return;
+      const ten = Math.round(parseFloat(text) * 2);
+      if (ten < 1) return;
+      node.data = ten + ' - ' + LABELS[ten - 1];
+    }
+
+    function scan() {
+      for (const span of document.querySelectorAll(PREVIEW_SELECTOR)) {
+        if (instrumented.has(span)) continue;
+        instrumented.add(span);
+        new MutationObserver(() => rewrite(span)).observe(span, { childList: true, characterData: true, subtree: true });
+        rewrite(span);
       }
     }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.14
+// @version      1.15
 // @description  All-in-one enhancements for the new Trakt Web: fade/hide filters for tracked items, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -508,7 +508,6 @@
         .${FADE_CLASS} .trakt-summary-card-details,
         .${FADE_CLASS} .trakt-summary-card-bottom-bar,
         .${FADE_CLASS} .trakt-card-action-bar,
-        .${FADE_CLASS} .trakt-rating-icon,
         .${FADE_CLASS} .trakt-summary-card-background img {
           transition: opacity 250ms ease, filter 250ms ease !important;
         }
@@ -546,14 +545,6 @@
         .${FADE_CLASS} .trakt-card-action-bar {
           filter: brightness(0.25) saturate(0.25) !important;
         }
-        /* A child cannot be exempted from an ancestor filter, but
-           brightness and saturate both compose multiplicatively down the
-           subtree, so this boost times the container's 0.25 nets 0.5:
-           the star keeps a hint of purple while the percentage text
-           follows the container fade. */
-        .${FADE_CLASS} .trakt-rating-icon {
-          filter: brightness(2) saturate(2) !important;
-        }
         /* Same theme split for the text/rating layer: brightness pushes
            toward black, which on a light card RAISES contrast (the rating
            star stayed vivid purple), so light washes by alpha instead,
@@ -564,12 +555,6 @@
         :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-card-action-bar {
           opacity: 0.25 !important;
           filter: saturate(0.5) !important;
-        }
-        /* The light wash is opacity-based and applies to the composite,
-           so the star boost cannot be compensated there; neutralize it
-           and let the star fade uniformly with the text. */
-        :where(:root.${LIGHT_CLASS}) .${FADE_CLASS} .trakt-rating-icon {
-          filter: none !important;
         }
         /* Hover-to-reveal only on fine pointers (same gate the app uses):
            on touch screens :hover sticks after a tap, leaving items
@@ -583,8 +568,7 @@
           .${FADE_CLASS}:hover .trakt-card-footer,
           .${FADE_CLASS}:hover .trakt-summary-card-details,
           .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
-          .${FADE_CLASS}:hover .trakt-card-action-bar,
-          .${FADE_CLASS}:hover .trakt-rating-icon {
+          .${FADE_CLASS}:hover .trakt-card-action-bar {
             opacity: 1 !important;
             filter: none !important;
           }

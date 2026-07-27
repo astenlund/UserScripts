@@ -898,6 +898,41 @@
       }, MUTATION_SETTLE_MS);
     };
 
+    // Optimistic patch, not a sweep: mutates the listed record in place,
+    // mirrors the change into the derived sets the renderer reads (the
+    // renderer never consults the cache; sets are otherwise rebuilt only
+    // inside refresh), persists WITHOUT touching fetchedAt (stamping a
+    // patch fresh would park an unreconciled write behind the full TTL;
+    // the untouched timestamp is what lets an interrupted session heal),
+    // and queues a rescan. Deliberately approximate: the post-write forced
+    // sweep replaces it with authoritative data shortly after.
+    quickLists.applyListToggle = (name, slugKey, add) => {
+      const listed = cache.listed;
+      const target = listed && listed.targets[name];
+      if (!target) return;
+      const exact = new Set(target.slugs);
+      if (add === exact.has(slugKey)) return;
+      if (add) {
+        exact.add(slugKey);
+        listed.counts[slugKey] = (listed.counts[slugKey] || 0) + 1;
+        if (!listed.slugs.includes(slugKey)) listed.slugs.push(slugKey);
+        sets.listed.add(slugKey);
+      } else {
+        exact.delete(slugKey);
+        const remaining = (listed.counts[slugKey] || 1) - 1;
+        if (remaining > 0) {
+          listed.counts[slugKey] = remaining;
+        } else {
+          delete listed.counts[slugKey];
+          listed.slugs = listed.slugs.filter(slug => slug !== slugKey);
+          sets.listed.delete(slugKey);
+        }
+      }
+      target.slugs = [...exact];
+      writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
+      queueScan();
+    };
+
     scanCallbacks.push(scan);
   })();
 

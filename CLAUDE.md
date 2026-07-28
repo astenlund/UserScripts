@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Commit Conventions
+
+This repo does not use the floating "CLAUDE" commit convention. Changes to CLAUDE.md and `.claude/*` files are committed as regular Conventional Commits, and may share a commit with related changes when they belong to the same logical change.
+
 ## Repository Overview
 
 This is a collection of userscripts (Greasemonkey/Tampermonkey scripts) that enhance various websites. Each script is a standalone JavaScript file with userscript metadata headers.

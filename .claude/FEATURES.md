@@ -186,21 +186,6 @@ frontmatter on the breakout file.
 
 Nothing being explored yet.
 
-## trakt_improved.user.js
-
-### [Fade on list pages](features/fade-on-list-pages.md)
-
-Extend the fade filters from `/discover` to list surfaces: list detail
-pages (`/users/<owner>/lists/<slug>`), smart list views, and all
-`/users/me/lists` overview tabs. On a page or card where the displayed
-item provably belongs to the containing list, the listed check excludes
-that list by raising the existing `counts[slug]` threshold from 1 to 2;
-a new `keys` list-identity field in the cache (cache version bumps
-3 to 4) classifies detail pages as mine/saved versus foreign. Design approved
-2026-07-30.
-
-**Requires:** none.
-
 ## History
 
 Implemented features are archived in

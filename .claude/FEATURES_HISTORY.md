@@ -25,4 +25,10 @@ what already shipped, not to resolve dependencies.
 
 ## Entries
 
-Nothing yet.
+- [Fade on list pages](features/fade-on-list-pages.md): fades extended
+  from /discover to list detail pages, smart list views, and the
+  /users/me/lists overview tabs, with a counts-threshold listed check
+  (threshold = 1 + the containing list's contribution, resolved via
+  owner/slug identity keys; cache v4). Shipped 2026-07-30 in Trakt
+  Improved 1.21 (commits 4984012, a09aa96 plus fixups, 6e70829,
+  6d88e73); live-verified against app.trakt.tv the same day.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.20
+// @version      1.21
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -763,6 +763,11 @@
       return section;
     }
 
+    // The warn fires once per page load: widened activation makes the
+    // unbuildable-pane branch reachable on per-frame scans of list pages,
+    // where an unguarded warn would flood the console.
+    let warnedPaneMarkup = false;
+
     function ensureFadeSection() {
       const displaySection = document.querySelector(`div.trakt-display-section:not([${SECTION_ATTR}])`);
       if (!displaySection) return;
@@ -770,7 +775,10 @@
       if (!section) {
         section = buildFadeSection(displaySection);
         if (!section) {
-          warn('Filter pane markup changed; cannot inject Fade section');
+          if (!warnedPaneMarkup) {
+            warnedPaneMarkup = true;
+            warn('Filter pane markup changed; cannot inject Fade section');
+          }
           return;
         }
         displaySection.after(section);

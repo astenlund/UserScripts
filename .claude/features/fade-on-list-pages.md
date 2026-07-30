@@ -1,5 +1,7 @@
 # Fade on list pages
 
+Status: signed off 2026-07-30 18:01, content: 310b2e80
+
 Extend the fade filters feature in `trakt_improved.user.js` from its
 current `/discover`-only scope to list surfaces, with the twist that a
 list's own page must not count that list toward the "listed" fade:
@@ -87,9 +89,19 @@ under-fades (no false fade), and the sweep self-heals it.
 from data the sweep already fetches (no new API calls).
 `normalizeCache` validates the new field alongside `counts` and
 `targets`; `CACHE_VERSION` bumps 3 to 4 so pre-existing caches refetch
-rather than serving records without `keys`. The `quickLists` shared
-surface (membershipState, getListTarget, bumpInvalidationMarker) is
-untouched.
+rather than serving records without `keys`.
+
+The `quickLists` shared surface keeps its API (membershipState,
+getListTarget, refreshMembership, applyListToggle,
+bumpInvalidationMarker) but is not untouched internally: there are two
+derivation sites for the listed membership view, `buildSets` and
+`applyListToggle` (which, after optimistically mutating `counts` in
+place, re-derives `sets.listed = new Set(Object.keys(counts))`,
+mirroring `buildSets`). With the threshold rule the listed check
+consults `counts` directly, so `sets.listed` and both lines deriving
+it go away; the optimistic patch keeps working unchanged, because
+mutating `counts` in place is the patch and the queued rescan re-reads
+it. `buildSets` keeps building the other three categories' sets.
 
 URL-to-key comparison should lowercase both sides defensively; slugs
 are canonically lowercase but the URL segment is user-visible input.

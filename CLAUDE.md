@@ -77,7 +77,8 @@ One shared body observer requeues every feature's scan callback per animation fr
 
 ### e2e testing
 
-- The installed Tampermonkey copy keeps running in the tab you inject into: both instances share the localStorage caches (version stamps make them ping-pong as each instance refreshes), both fetch hooks see the same writes, and either can toggle fade classes. Disable the installed script for the run if possible; otherwise verify server-side effects via the API rather than UI state.
+- The installed Tampermonkey copy keeps running in the tab you inject into: both instances share the localStorage caches (version stamps make them ping-pong as each instance refreshes), both fetch hooks see the same writes, and either can toggle fade classes. Disable the installed script for the run if possible; when it is not (extension pages are unreachable from browser tooling), inject a namespaced build instead: rename the feature's localStorage keys and CSS class/style-id string constants (e.g. `-e2e` key suffixes, `tff2-*` class and style id) so the two instances cannot fight over classes or ping-pong cache versions. The installed copy then doubles as a live regression oracle on surfaces where both are active. As a last resort, verify server-side effects via the API rather than UI state.
+- Synthetic `anchor.click()` on an in-DOM `a[href]` performs SPA navigation without a page reload (the app intercepts link clicks), so an injected instance survives route changes; a temporary appended anchor works for routes with no on-page link.
 - Page CSP blocks fetches to localhost. Inject code through the browser tooling instead of loading it over HTTP.
 - app.trakt.tv card grids are virtualized: cards hydrate only near the viewport and only after real scroll events. Synthetic (untrusted) clicks do not open or close the app's menus; the summary-actions underlay is the one dismissal surface that accepts them.
 

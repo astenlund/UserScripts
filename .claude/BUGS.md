@@ -63,7 +63,10 @@ invalidation likely only reacts to writes seen by the local tab's fetch
 hook, so out-of-tab writes wait out the cache lifetime. Adjacent to the
 QUICK_WINS.md entry "Write-triggered membership refresh can read
 server-cache-stale list items", which covers the same server-side
-caching territory from the same-tab side.
+caching territory from the same-tab side. Since fade-on-list-pages
+shipped (Trakt Improved 1.21), fades render on list surfaces too, so
+the missing-fade window is visible there as well; see the Interactions
+section in `features/fade-on-list-pages.md`.
 
 **Requires:** none.
 

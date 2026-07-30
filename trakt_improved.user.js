@@ -239,7 +239,7 @@
   (function initFadeFilters() {
     const STATE_KEY = 'trakt-fade-filters';
     const CACHE_KEY = 'trakt-fade-cache';
-    const CACHE_VERSION = 3;
+    const CACHE_VERSION = 4;
     const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
     const MARKER_PREFIX = 'trakt-marker:invalidate:';
     const SELF_MARKER_KEY = MARKER_PREFIX + 'fork-scripts-quick-lists';
@@ -271,9 +271,10 @@
     }
 
     // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
-    // except listed, which carries { counts, targets, fetchedAt } (see
-    // fetchListedData): its slug set is exactly the keys of counts, so a
-    // separate slugs array would be redundant state to keep in sync. All
+    // except listed, which carries { counts, targets, keys, fetchedAt }
+    // (see fetchListedData): counts is consulted directly by the listed
+    // fade check, and keys holds the owner/slug identities that classify
+    // a viewed list as mine/saved for the containing-list exclusion. All
     // under a top-level version stamp so a format change forces a refetch
     // instead of serving entries the new matching logic misreads.
     function normalizeCache(raw) {
@@ -285,6 +286,7 @@
           const shapeOk = rec && typeof rec.fetchedAt === 'number'
             && rec.counts && typeof rec.counts === 'object'
             && rec.targets && typeof rec.targets === 'object'
+            && Array.isArray(rec.keys)
             && Object.values(rec.targets).every(t => t === null || (t && typeof t.id === 'number' && Array.isArray(t.slugs)));
           cache[cat] = shapeOk ? rec : null;
         } else {
@@ -427,7 +429,14 @@
           .filter(Boolean);
         targets[name] = { id: withIds[indices[0]].ids.trakt, slugs: exact };
       }
-      return { counts, targets };
+      // Owner/slug identity keys let the fade threshold classify a viewed
+      // list as mine/saved. Lowercased here once; URL segments are
+      // lowercased at comparison time. A list missing either slug
+      // contributes no key (its detail page then reads as foreign).
+      const keys = withIds
+        .filter(list => list.ids.slug && list.user && list.user.ids && list.user.ids.slug)
+        .map(list => (list.user.ids.slug + '/' + list.ids.slug).toLowerCase());
+      return { counts, targets, keys };
     }
 
     // Watchlist/list items are heterogeneous: shows and movies contribute their

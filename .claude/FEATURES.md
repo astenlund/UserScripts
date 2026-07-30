@@ -186,6 +186,24 @@ frontmatter on the breakout file.
 
 Nothing being explored yet.
 
+## trakt_improved.user.js
+
+### [Lane-identity contribution on overview list lanes](features/fade-on-list-pages.md)
+
+Follow-up slice on the shipped fade-on-list-pages feature. The
+overview tabs render list lanes without `.trakt-list-summary-card`
+wrappers, so lane cards take the conservative contribution-1
+fallback; on `/view/liked` that under-fades items sitting on exactly
+one of my lists (liked lists are not in the counts corpus). Resolve
+a lane's containing list from its heading anchor
+(`.trakt-list-inset-title`, username-form list URL) and feed it the
+same owner-`me`-or-`keys` test the summary-card rules use; positive
+identification only, fallback unchanged. Design context lives in the
+linked feature file's threshold section (live-verification note of
+2026-07-30).
+
+**Requires:** none.
+
 ## History
 
 Implemented features are archived in

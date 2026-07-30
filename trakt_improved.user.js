@@ -296,14 +296,14 @@
       return cache;
     }
 
+    // No listed set: the listed fade check consults cache.listed.counts
+    // directly against a per-card threshold (see applyFades), so a set
+    // would be a second derivation to keep in sync.
     function buildSets(cache) {
       const sets = {};
       for (const cat of CATEGORIES) {
-        if (cat === 'listed') {
-          sets[cat] = new Set(cache.listed ? Object.keys(cache.listed.counts) : []);
-        } else {
-          sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
-        }
+        if (cat === 'listed') continue;
+        sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
       }
       return sets;
     }
@@ -394,10 +394,10 @@
       return progress;
     }
 
-    // Per-list results instead of a flat merge: the merged mapped slugs
-    // feed the fade sets as before; the per-slug list counts make removal
-    // unfade correctly (an item on two lists stays faded when it leaves
-    // one); the exact membership of the quick-toggle target lists drives
+    // Per-list results instead of a flat merge: the per-slug list counts
+    // feed the listed fade check directly and make removal unfade
+    // correctly (an item on two lists stays faded when it leaves one);
+    // the exact membership of the quick-toggle target lists drives
     // the menu entries. Exact membership counts only items whose own type
     // is show/movie: a season sitting in a list does not make its show a
     // member, because the toggle operates on the show itself. A name that
@@ -799,18 +799,122 @@
       return null;
     }
 
+    // One shape test for /users/<owner>/lists/<slug> list URLs: exactly
+    // 4 segments, slug never 'view' (the overview tab prefix).
+    function listPathParts(pathname) {
+      const segments = pathname.split('/').filter(Boolean);
+      if (segments.length === 4 && segments[0] === 'users' && segments[2] === 'lists' && segments[3] !== 'view') {
+        return { owner: segments[1], slug: segments[3] };
+      }
+      return null;
+    }
+
+    // Page-context classifier for the fade scope. 'discover' and 'smart'
+    // carry no containing list; 'detail' is a list URL per listPathParts;
+    // 'overview' is exactly /users/me/lists or /users/me/lists/view and
+    // deeper. Foreign or username-form overview routes are unverified to
+    // exist and deliberately do not activate.
+    function pageContext() {
+      const path = location.pathname;
+      if (path === '/discover' || path.startsWith('/discover/')) return 'discover';
+      if (path.startsWith('/lists/smart/view/')) return 'smart';
+      const segments = path.split('/').filter(Boolean);
+      if (segments[0] === 'users' && segments[1] === 'me' && segments[2] === 'lists'
+          && (segments.length === 3 || segments[3] === 'view')) {
+        return 'overview';
+      }
+      return listPathParts(path) ? 'detail' : null;
+    }
+
+    function listKeyKnown(owner, slug) {
+      if (owner === 'me') return true;
+      const key = (owner + '/' + slug).toLowerCase();
+      return Boolean(cache.listed) && cache.listed.keys.includes(key);
+    }
+
+    // Contribution of the viewed list to counts on a detail page: 1 when
+    // the list is mine or saved, else 0 (a foreign list's items were never
+    // counted, so no exclusion is needed).
+    function detailContribution() {
+      const parts = listPathParts(location.pathname);
+      return parts && listKeyKnown(parts.owner, parts.slug) ? 1 : 0;
+    }
+
+    // Positive smart-list identification: walk up from the card to the
+    // nearest ancestor containing any list-card landmark; only a container
+    // holding a smart-list header and no summary card counts as a smart
+    // wrapper. Ambiguity (a lane holding both kinds) resolves to false,
+    // which routes the card to the conservative contribution-1 fallback.
+    function insideSmartListCard(card) {
+      for (let node = card.parentElement; node && node !== document.body; node = node.parentElement) {
+        const hasSmart = node.querySelector('.trakt-smart-list-header') !== null;
+        const hasSummary = node.querySelector('.trakt-list-summary-card') !== null;
+        if (hasSmart || hasSummary) return hasSmart && !hasSummary;
+      }
+      return false;
+    }
+
+    // A summary card's contribution is decided by its title anchor: the
+    // first anchor that parses as a list URL names the containing list.
+    // Contribution 0 only on positive identification; an unrecognized
+    // summary card conservatively contributes 1 (at worst an under-fade).
+    function summaryContribution(summary) {
+      for (const anchor of summary.querySelectorAll('a[href]')) {
+        const parts = listPathParts(new URL(anchor.href, location.origin).pathname);
+        if (parts) return listKeyKnown(parts.owner, parts.slug) ? 1 : 0;
+      }
+      return 1;
+    }
+
+    // threshold = 1 + contribution: subtracting the containing list's own
+    // contribution turns "on >= threshold lists" into "on at least one
+    // list other than this one" (see the feature spec for the derivation).
+    // Resolution is scan-scoped: the detail-page value is page-invariant
+    // and an overview summary card's value is shared by all its previews,
+    // so each is computed at most once per scan.
+    function contributionResolver(context) {
+      if (context === 'detail') {
+        const contribution = detailContribution();
+        return () => contribution;
+      }
+      if (context === 'overview') {
+        const bySummary = new Map();
+        const smartByParent = new Map();
+        return card => {
+          const summary = card.closest('.trakt-list-summary-card');
+          if (summary) {
+            if (!bySummary.has(summary)) bySummary.set(summary, summaryContribution(summary));
+            return bySummary.get(summary);
+          }
+          // The ancestor walk's result depends only on the chain above the
+          // card's parent, which sibling cards in one lane share.
+          const parent = card.parentElement;
+          if (!smartByParent.has(parent)) smartByParent.set(parent, insideSmartListCard(card));
+          return smartByParent.get(parent) ? 0 : 1;
+        };
+      }
+      return () => 0;
+    }
+
     // Episode cards never fade by show membership: lanes like Continue Watching
     // and Calendar surface unwatched episodes of started shows on purpose, so
     // dimming them would defeat those lanes. Season cards fade by the season's
     // own progress; show/movie cards by their slug.
     function applyFades() {
       const fadeCats = CATEGORIES.filter(cat => state[cat]);
+      const setCats = fadeCats.filter(cat => cat !== 'listed');
+      const listedOn = fadeCats.includes('listed');
+      const counts = cache.listed ? cache.listed.counts : {};
+      const contributionFor = contributionResolver(pageContext());
       for (const card of document.querySelectorAll('div.trakt-card')) {
         const target = cardTarget(card);
         let fade = false;
         if (target !== null && target.episode === null) {
           const key = target.season === null ? target.slug : `${target.slug}:s${target.season}`;
-          fade = fadeCats.some(cat => sets[cat].has(key));
+          fade = setCats.some(cat => sets[cat].has(key));
+          if (!fade && listedOn) {
+            fade = (counts[key] || 0) >= 1 + contributionFor(card);
+          }
         }
         card.classList.toggle(FADE_CLASS, fade);
       }
@@ -878,7 +982,8 @@
     // scan's own refresh trigger: TTL age alone would miss app-driven
     // changes (a native Manage-lists tick sets the mutation-forced flag;
     // another tab's change lands via the invalidation markers), leaving
-    // toggle icons wrong for the full TTL on non-/discover pages.
+    // toggle icons wrong for the full TTL on pages where the fade scan
+    // (and with it the scan-triggered refresh) is inactive.
     function membershipStale() {
       return forceRefresh || rearmedRefresh || markersChanged() || categoryStale('listed');
     }
@@ -943,16 +1048,13 @@
       }, MUTATION_SETTLE_MS);
     };
 
-    // Optimistic patch, not a sweep: mutates the listed record in place,
-    // re-derives the listed set the renderer reads (the renderer never
-    // consults the cache; sets are otherwise rebuilt only inside refresh,
-    // and the set is by definition the keys of counts, so re-deriving
-    // beats hand-mirroring the transitions), persists WITHOUT touching
-    // fetchedAt (stamping a patch fresh would park an unreconciled write
-    // behind the full TTL; the untouched timestamp is what lets an
-    // interrupted session heal), and queues a rescan. Deliberately
-    // approximate: the post-write forced sweep replaces it with
-    // authoritative data shortly after.
+    // Optimistic patch, not a sweep: mutates the listed record in place
+    // (the fade check reads counts directly, so the mutation IS the
+    // patch), persists WITHOUT touching fetchedAt (stamping a patch fresh
+    // would park an unreconciled write behind the full TTL; the untouched
+    // timestamp is what lets an interrupted session heal), and queues a
+    // rescan. Deliberately approximate: the post-write forced sweep
+    // replaces it with authoritative data shortly after.
     quickLists.applyListToggle = (name, slugKey, add) => {
       const listed = cache.listed;
       const target = listed && listed.targets[name];
@@ -971,7 +1073,6 @@
           delete listed.counts[slugKey];
         }
       }
-      sets.listed = new Set(Object.keys(listed.counts));
       target.slugs = [...exact];
       persistCache();
       queueScan();

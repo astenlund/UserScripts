@@ -357,3 +357,4 @@ container, not to switch approaches.
 ## Hardening
 
 - revise-spec graduated 2026-07-30 19:15 at d3c0e6c, scope: whole file, content: 9b4f5765
+- handover completed 2026-07-31 00:25 at e4eff14, scope: whole file, content: 78692bf6

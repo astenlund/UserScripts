@@ -30,8 +30,13 @@ it lost).
   `me` is accepted as owner. The slug may embed a uuid.
 - Smart list views: `/lists/smart/view/<slug>`. Smart lists are dynamic
   filter queries, not real lists; no membership endpoint exists.
-- `GET /users/me/lists` returns ALL personal and saved (liked) lists in
-  one call, each with `ids.slug` and `user.ids.slug` (canonical owner).
+- `GET /users/me/lists` returns personal lists only, each with
+  `ids.slug` and `user.ids.slug` (canonical owner). Liked lists live
+  in the separate `GET /users/me/likes/lists` and are NOT in the
+  corpus (corrected 2026-07-30 during live verification; an earlier
+  note claimed saved lists rode along). Their absence is handled
+  correctly by the identity rule: a liked list fails the `keys` match
+  and contributes 0, which matches its zero contribution to `counts`.
 
 ## Activation scope
 
@@ -90,11 +95,13 @@ is 1 when it is in the `/users/me/lists` corpus (personal or saved),
 
 - Detail pages: contribution is 1 iff the URL owner segment is `me`,
   or `<owner>/<slug>` from the URL matches a `keys` entry (next
-  section). The saved-list case matters: `/users/me/lists` returns
-  saved lists too, so someone else's list that I have liked must be
-  excluded like my own, or every item on it fades. An unsaved
-  foreign list fails the same test and contributes 0, which is why
-  the plain `counts >= 1` check is already correct there.
+  section). A foreign list, liked or not, fails the test and
+  contributes 0, which is correct either way: its items were never
+  counted into `counts`, so the plain `counts >= 1` check reads "on
+  one of my lists" there. (The design originally excluded liked
+  lists defensively on the belief they rode along in the corpus;
+  live verification showed they do not, so the exclusion is simply
+  never needed for them.)
 - Overview pages, decided per card by the first matching rule:
   1. Inside a `.trakt-list-summary-card` (via `closest`) whose title
      anchor parses as `/users/<owner>/lists/<slug>`: the same
@@ -119,6 +126,18 @@ is 1 when it is in the `/users/me/lists` corpus (personal or saved),
      there too.
 - `/discover` and smart list views: no containing list, contribution
   0, existing behavior unchanged.
+
+Live verification (2026-07-30) found that the overview surfaces
+render list lanes as plain heading-plus-grid, with NO
+`.trakt-list-summary-card` wrapping around the media cards: rules
+1-3 above are dormant robustness against future markup, and rule 4's
+conservative contribution 1 governs every lane card. That is exact
+for personal-list lanes (the containing list is in the corpus) and
+under-fades liked-list lanes for items on exactly one of my lists
+(observed on 2 of 30 cards; direction matches the accepted failure
+posture). Refinement candidate, tracked in the backlog: resolve a
+lane's containing list from its heading anchor
+(`.trakt-list-inset-title`) the way rules 1-2 do for summary cards.
 
 This per-card identity rule replaces an earlier blanket
 threshold-2-inside-summary-cards rule, which rested on the premise
@@ -257,9 +276,15 @@ page CSP blocks localhost fetches, use real scrolls because card grids
 are virtualized):
 
 - Own list detail: only items on at least one other list fade.
-- Foreign (unsaved) list detail: plain rule, my listed items fade.
-- Saved list detail (someone else's list I liked): exclusion applies.
-- Smart list view: plain rule.
+  (Verified live 2026-07-30, username-form URL via keys match: 10
+  cards faded solely by second-list membership, 10 single-list cards
+  unfaded, zero mismatches.)
+- Foreign list detail, liked or unsaved: plain rule, my listed items
+  fade. (Verified live 2026-07-30 on a liked list: contribution 0,
+  zero mismatches. Liked lists are not in the corpus, so no
+  exclusion arises for them.)
+- Smart list view: plain rule. (Verified live 2026-07-30; bare
+  /lists/smart/view stays inactive.)
 - Overview root and `/view/*` tabs: previews fade only for items on a
   list other than their containing list.
 - Collaborations tab (`/view/collaborations`): an item on a
@@ -267,6 +292,9 @@ are virtualized):
   either resolution of the corpus question: a collab list absent
   from `/users/me/lists` fails the `keys` match (threshold 1,
   counts 1), one present in it matches (threshold 2, counts 2).
+  (Not exercisable in the 2026-07-30 verification: the account has
+  no collaboration lists; the rule needs no per-tab code either
+  way.)
 - Quick-toggle optimistic path on a threshold-2 surface: toggling an
   item onto a second list fades it immediately, toggling it back off
   unfades it immediately, both before any sweep runs (the

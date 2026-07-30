@@ -799,10 +799,13 @@
       return null;
     }
 
+    function pathSegments(pathname) {
+      return pathname.split('/').filter(Boolean);
+    }
+
     // One shape test for /users/<owner>/lists/<slug> list URLs: exactly
     // 4 segments, slug never 'view' (the overview tab prefix).
-    function listPathParts(pathname) {
-      const segments = pathname.split('/').filter(Boolean);
+    function listPathParts(segments) {
       if (segments.length === 4 && segments[0] === 'users' && segments[2] === 'lists' && segments[3] !== 'view') {
         return { owner: segments[1], slug: segments[3] };
       }
@@ -818,12 +821,12 @@
       const path = location.pathname;
       if (path === '/discover' || path.startsWith('/discover/')) return 'discover';
       if (path.startsWith('/lists/smart/view/')) return 'smart';
-      const segments = path.split('/').filter(Boolean);
+      const segments = pathSegments(path);
       if (segments[0] === 'users' && segments[1] === 'me' && segments[2] === 'lists'
           && (segments.length === 3 || segments[3] === 'view')) {
         return 'overview';
       }
-      return listPathParts(path) ? 'detail' : null;
+      return listPathParts(segments) ? 'detail' : null;
     }
 
     function listKeyKnown(owner, slug) {
@@ -836,7 +839,7 @@
     // the list is mine or saved, else 0 (a foreign list's items were never
     // counted, so no exclusion is needed).
     function detailContribution() {
-      const parts = listPathParts(location.pathname);
+      const parts = listPathParts(pathSegments(location.pathname));
       return parts && listKeyKnown(parts.owner, parts.slug) ? 1 : 0;
     }
 
@@ -860,7 +863,7 @@
     // summary card conservatively contributes 1 (at worst an under-fade).
     function summaryContribution(summary) {
       for (const anchor of summary.querySelectorAll('a[href]')) {
-        const parts = listPathParts(new URL(anchor.href, location.origin).pathname);
+        const parts = listPathParts(pathSegments(new URL(anchor.href, location.origin).pathname));
         if (parts) return listKeyKnown(parts.owner, parts.slug) ? 1 : 0;
       }
       return 1;
@@ -900,12 +903,12 @@
     // and Calendar surface unwatched episodes of started shows on purpose, so
     // dimming them would defeat those lanes. Season cards fade by the season's
     // own progress; show/movie cards by their slug.
-    function applyFades() {
+    function applyFades(context) {
       const fadeCats = CATEGORIES.filter(cat => state[cat]);
       const setCats = fadeCats.filter(cat => cat !== 'listed');
       const listedOn = fadeCats.includes('listed');
       const counts = cache.listed ? cache.listed.counts : {};
-      const contributionFor = contributionResolver(pageContext());
+      const contributionFor = contributionResolver(context);
       for (const card of document.querySelectorAll('div.trakt-card')) {
         const target = cardTarget(card);
         let fade = false;
@@ -920,24 +923,24 @@
       }
     }
 
-    // Fading is scoped to the /discover pages: personal surfaces (home lanes
-    // like Start Watching, watchlist, lists) consist of tracked items by
-    // definition, so fading there would dim entire lanes. The @match stays
-    // site-wide because the SPA navigates without reloading; outside /discover
-    // the scan only clears stale fade classes on reused nodes and skips the
-    // Fade section and API refreshes entirely.
-    function fadingActive() {
-      return location.pathname === '/discover' || location.pathname.startsWith('/discover/');
-    }
-
+    // Fading is scoped to /discover plus list surfaces (detail pages, smart
+    // list views, the /users/me/lists overview); the listed check excludes
+    // the containing list there via the counts threshold, so a list's own
+    // page is not dimmed wholesale. Other personal surfaces (home lanes,
+    // the watchlist page) consist of tracked items by definition and stay
+    // out of scope. The @match stays site-wide because the SPA navigates
+    // without reloading; on inactive pages the scan only clears stale fade
+    // classes on reused nodes and skips the Fade section and API refreshes
+    // entirely.
     function scan() {
-      if (!fadingActive()) {
+      const context = pageContext();
+      if (context === null) {
         document.querySelectorAll(`.${FADE_CLASS}`).forEach(el => el.classList.remove(FADE_CLASS));
         return;
       }
       injectStyles();
       ensureFadeSection();
-      applyFades();
+      applyFades(context);
       if (forceRefresh || rearmedRefresh || cacheStale() || markersChanged()) {
         queueRefresh();
       }

@@ -44,11 +44,11 @@ keys to it would make `cacheStale()` permanently true, turning the
 scan/refresh pair into an unbounded full-sweep loop (scan queues a
 refresh on staleness, a successful refresh queues a scan, and the
 backoff only engages on failure). Instead a new `FADE_CATEGORIES`
-list (`CATEGORIES` plus the two quick keys, in that order) drives
-the fade-facing consumers: `state` and its defaults, the pane
-row-building loop, and `applyFades`' category iteration. The Fade
-pane therefore reads Started, Watched, Watchlisted, Listed,
-Anticipated, Uninterested. Labels and aria-labels come from the
+list drives the fade-facing consumers: `state` and its defaults,
+the pane row-building loop, and `applyFades`' category iteration.
+Row order (a post-ship tweak in 1.23 moved the catch-all Listed row
+last): the Fade pane reads Started, Watched, Watchlisted,
+Anticipated, Uninterested, Listed. Labels and aria-labels come from the
 display names: the row loop's label lookup extends to cover the two
 quick keys (LABELS gains the two entries from `QUICK_CATS`, or an
 equivalent fallback lookup).

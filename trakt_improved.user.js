@@ -898,88 +898,173 @@
       return Boolean(cache.listed) && cache.listed.keys.includes(key);
     }
 
-    // Contribution of the viewed list to counts on a detail page: 1 when
-    // the list is mine or saved, else 0 (a foreign list's items were never
-    // counted, so no exclusion is needed).
-    function detailContribution() {
-      const parts = listPathParts(pathSegments(location.pathname));
-      return parts && listKeyKnown(parts.owner, parts.slug) ? 1 : 0;
+    // A target with key null (list missing its own or its owner's slug)
+    // cannot be recognized here, so its own surfaces fade under their
+    // toggle; accepted degradation per the spec's Failure modes.
+    function quickCatFor(owner, slug) {
+      for (const [cat, name] of Object.entries(QUICK_CATS)) {
+        const target = cache.listed && cache.listed.targets[name];
+        if (!target || !target.key) continue;
+        const listSlug = target.key.split('/')[1];
+        if (owner === 'me' ? slug === listSlug : owner + '/' + slug === target.key) return cat;
+      }
+      return null;
     }
 
-    // Positive smart-list identification: walk up from the card to the
-    // nearest ancestor containing any list-card landmark; only a container
-    // holding a smart-list header and no summary card counts as a smart
-    // wrapper. Ambiguity (a lane holding both kinds) resolves to false,
-    // which routes the card to the conservative contribution-1 fallback.
-    function insideSmartListCard(card) {
+    // Classification of a positively resolved containing list, shared by
+    // every surface. A quick list's own surface excludes that category
+    // and contributes 0 (its items were never counted); anything else
+    // takes the mine/saved test for the Listed threshold. quickAllowed
+    // is always true here: positive resolution is exactly what the
+    // overview gate requires.
+    function classifyParts(parts) {
+      const owner = parts.owner.toLowerCase();
+      const slug = parts.slug.toLowerCase();
+      const excludedCat = quickCatFor(owner, slug);
+      if (excludedCat !== null) {
+        return { contribution: 0, excludedCat, quickAllowed: true };
+      }
+      return { contribution: listKeyKnown(owner, slug) ? 1 : 0, excludedCat: null, quickAllowed: true };
+    }
+
+    // First defined result of test(ancestor), walking from the card's
+    // parent up to (excluding) document.body; undefined when no ancestor
+    // decides.
+    function walkAncestors(card, test) {
       for (let node = card.parentElement; node && node !== document.body; node = node.parentElement) {
+        const result = test(node);
+        if (result !== undefined) return result;
+      }
+      return undefined;
+    }
+
+    // Positive smart-list identification: the nearest ancestor containing
+    // any list-card landmark decides; only a container holding a
+    // smart-list header and no summary card counts as a smart wrapper.
+    // Ambiguity (a lane holding both kinds) resolves to false, which
+    // routes the card to the conservative contribution-1 fallback.
+    function insideSmartListCard(card) {
+      const verdict = walkAncestors(card, node => {
         const hasSmart = node.querySelector('.trakt-smart-list-header') !== null;
         const hasSummary = node.querySelector('.trakt-list-summary-card') !== null;
-        if (hasSmart || hasSummary) return hasSmart && !hasSummary;
-      }
-      return false;
+        return hasSmart || hasSummary ? hasSmart && !hasSummary : undefined;
+      });
+      return verdict === undefined ? false : verdict;
     }
 
-    // A summary card's contribution is decided by its title anchor: the
-    // first anchor that parses as a list URL names the containing list.
-    // Contribution 0 only on positive identification; an unrecognized
-    // summary card conservatively contributes 1 (at worst an under-fade).
-    function summaryContribution(summary) {
-      for (const anchor of summary.querySelectorAll('a[href]')) {
+    // The first anchor inside the container whose href parses as a list
+    // URL names the containing list; null when none does. Serves both
+    // summary cards (whose landmark match is terminal: an anchorless
+    // summary card reads as unidentified, never falling through to lane
+    // resolution) and lane headings.
+    function listPartsIn(container) {
+      for (const anchor of container.querySelectorAll('a[href]')) {
         const parts = listPathParts(pathSegments(new URL(anchor.href, location.origin).pathname));
-        if (parts) return listKeyKnown(parts.owner, parts.slug) ? 1 : 0;
+        if (parts) return parts;
       }
-      return 1;
+      return null;
+    }
+
+    // Lane resolution: nearest ancestor containing exactly one lane
+    // heading (.trakt-list-inset-title). A card inside a lane resolves
+    // to its own lane's container or to nothing (a walk that first
+    // reaches a container with multiple headings, e.g. the whole page,
+    // or none yields no identification); a card outside every lane may
+    // bind to a lone heading on its ancestor chain, which is safe in
+    // the under-fade direction only.
+    function laneContainer(card) {
+      const lane = walkAncestors(card, node => {
+        const insets = node.querySelectorAll('.trakt-list-inset-title');
+        if (insets.length === 1) return node;
+        return insets.length > 1 ? null : undefined;
+      });
+      return lane === undefined ? null : lane;
     }
 
     // threshold = 1 + contribution: subtracting the containing list's own
     // contribution turns "on >= threshold lists" into "on at least one
     // list other than this one" (see the feature spec for the derivation).
-    // Resolution is scan-scoped: the detail-page value is page-invariant
-    // and an overview summary card's value is shared by all its previews,
-    // so each is computed at most once per scan.
+    // The resolver now yields a full verdict {contribution, excludedCat,
+    // quickAllowed} per card: excludedCat suppresses that quick category
+    // on its own list's surface, and quickAllowed is the overview gate
+    // (quick fades only on positive rule-1/rule-2 identification; a
+    // spuriously true smart verdict must not permit fades, since
+    // insideSmartListCard tests subtree containment, not the card's own
+    // lane). Resolution is scan-scoped: the detail-page verdict is
+    // page-invariant and overview verdicts are cached per summary card,
+    // per lane, and per parent, so each is computed at most once per scan.
     function contributionResolver(context) {
+      const OPEN = { contribution: 0, excludedCat: null, quickAllowed: true };
       if (context === 'detail') {
-        const contribution = detailContribution();
-        return () => contribution;
+        const parts = listPathParts(pathSegments(location.pathname));
+        const verdict = parts ? classifyParts(parts) : OPEN;
+        return () => verdict;
       }
       if (context === 'overview') {
+        const UNIDENTIFIED = { contribution: 1, excludedCat: null, quickAllowed: false };
+        const SMART = { contribution: 0, excludedCat: null, quickAllowed: false };
         const bySummary = new Map();
+        const laneByParent = new Map();
+        const byLane = new Map();
         const smartByParent = new Map();
         return card => {
+          // Rule 1: summary-card landmark, terminal even when anchorless.
           const summary = card.closest('.trakt-list-summary-card');
           if (summary) {
-            if (!bySummary.has(summary)) bySummary.set(summary, summaryContribution(summary));
+            if (!bySummary.has(summary)) {
+              const parts = listPartsIn(summary);
+              bySummary.set(summary, parts ? classifyParts(parts) : UNIDENTIFIED);
+            }
             return bySummary.get(summary);
           }
-          // The ancestor walk's result depends only on the chain above the
-          // card's parent, which sibling cards in one lane share.
+          // Rule 2: lane-heading resolution; a failed walk or an
+          // unparsable heading falls through to the smart check.
           const parent = card.parentElement;
+          if (!laneByParent.has(parent)) laneByParent.set(parent, laneContainer(card));
+          const lane = laneByParent.get(parent);
+          if (lane) {
+            if (!byLane.has(lane)) {
+              const parts = listPartsIn(lane.querySelector('.trakt-list-inset-title'));
+              byLane.set(lane, parts ? classifyParts(parts) : null);
+            }
+            const verdict = byLane.get(lane);
+            if (verdict) return verdict;
+          }
+          // Rule 3: positive smart identification, contribution-only.
           if (!smartByParent.has(parent)) smartByParent.set(parent, insideSmartListCard(card));
-          return smartByParent.get(parent) ? 0 : 1;
+          return smartByParent.get(parent) ? SMART : UNIDENTIFIED;
         };
       }
-      return () => 0;
+      return () => OPEN;
     }
 
     // Episode cards never fade by show membership: lanes like Continue Watching
     // and Calendar surface unwatched episodes of started shows on purpose, so
     // dimming them would defeat those lanes. Season cards fade by the season's
-    // own progress; show/movie cards by their slug.
+    // own progress; show/movie cards by their slug. Quick categories are
+    // additionally gated by the resolver's verdict: excluded on their own
+    // list's surface, withheld on the overview without positive
+    // identification (see contributionResolver).
     function applyFades(context) {
-      const fadeCats = CATEGORIES.filter(cat => state[cat]);
+      const fadeCats = FADE_CATEGORIES.filter(cat => state[cat]);
       const setCats = fadeCats.filter(cat => cat !== 'listed');
       const listedOn = fadeCats.includes('listed');
       const counts = cache.listed ? cache.listed.counts : {};
-      const contributionFor = contributionResolver(context);
+      const verdictFor = contributionResolver(context);
       for (const card of document.querySelectorAll('div.trakt-card')) {
         const target = cardTarget(card);
         let fade = false;
         if (target !== null && target.episode === null) {
           const key = target.season === null ? target.slug : `${target.slug}:s${target.season}`;
-          fade = setCats.some(cat => sets[cat].has(key));
+          const verdict = verdictFor(card);
+          fade = setCats.some(cat => {
+            if (cat in QUICK_CATS && (!verdict.quickAllowed || cat === verdict.excludedCat)) {
+              return false;
+            }
+            return sets[cat].has(key);
+          });
           if (!fade && listedOn) {
-            fade = (counts[key] || 0) >= 1 + contributionFor(card);
+            fade = (counts[key] || 0) >= 1 + verdict.contribution;
           }
         }
         card.classList.toggle(FADE_CLASS, fade);

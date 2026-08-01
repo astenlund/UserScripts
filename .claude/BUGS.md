@@ -50,6 +50,11 @@ work, and no error toast appears when a toggle fails, so the failure is
 invisible until the list is inspected. Undiagnosed stub: unclear whether
 the write request fails, is never sent, or succeeds while the UI reports
 nothing; the failure-toast path evidently does not fire either way.
+Since quick-list-fade-toggles shipped (Trakt Improved 1.22),
+`applyListToggle` no longer patches counts (it patches the target's
+`slugs` and `fadeSlugs` and rebuilds the derived sets), so the write-path
+diagnosis reasons about a simpler optimistic surface; see the
+Interactions section in `features/quick-list-fade-toggles.md`.
 
 **Requires:** none.
 
@@ -66,7 +71,9 @@ server-cache-stale list items", which covers the same server-side
 caching territory from the same-tab side. Since fade-on-list-pages
 shipped (Trakt Improved 1.21), fades render on list surfaces too, so
 the missing-fade window is visible there as well; see the Interactions
-section in `features/fade-on-list-pages.md`.
+section in `features/fade-on-list-pages.md`. Quick-list fades (Trakt
+Improved 1.22) ride the same membership sweep, so the window applies
+to them equally.
 
 **Requires:** none.
 

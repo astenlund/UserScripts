@@ -135,9 +135,14 @@ conservative contribution 1 governs every lane card. That is exact
 for personal-list lanes (the containing list is in the corpus) and
 under-fades liked-list lanes for items on exactly one of my lists
 (observed on 2 of 30 cards; direction matches the accepted failure
-posture). Refinement candidate, tracked in the backlog: resolve a
-lane's containing list from its heading anchor
-(`.trakt-list-inset-title`) the way rules 1-2 do for summary cards.
+posture). That refinement shipped with the quick-list fade toggles
+feature (Trakt Improved 1.22, see `quick-list-fade-toggles.md`),
+whose generalized resolver adds lane-heading resolution with
+containment validation. Its live verification (2026-08-01) found
+the overview markup changed again: lists render as
+`.trakt-list-summary-card` entries whose fanned previews are not
+media cards, so both the summary-card rules and the lane
+resolution are dormant robustness on the current shape.
 
 This per-card identity rule replaces an earlier blanket
 threshold-2-inside-summary-cards rule, which rested on the premise

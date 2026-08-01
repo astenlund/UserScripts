@@ -186,23 +186,6 @@ frontmatter on the breakout file.
 
 Nothing being explored yet.
 
-## trakt_improved.user.js
-
-### [Quick-list fade toggles](features/quick-list-fade-toggles.md)
-
-Two new Fade-section toggles, one per quick list (Anticipated,
-Uninterested), mirroring Watchlisted: independent set-based
-categories whose membership is carved out of the generic Listed
-counts, with own-surface exclusion on each list's detail page and
-overview lane so a sticky toggle never fades its own list wholesale.
-Absorbs the former "Lane-identity contribution on overview list
-lanes" follow-up slice (resolving a lane's containing list from its
-`.trakt-list-inset-title` heading anchor), which is required
-machinery for the overview-lane exclusion and incidentally fixes the
-liked-lane under-fade documented in `fade-on-list-pages.md`.
-
-**Requires:** none.
-
 ## History
 
 Implemented features are archived in

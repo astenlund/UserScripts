@@ -239,7 +239,7 @@
   (function initFadeFilters() {
     const STATE_KEY = 'trakt-fade-filters';
     const CACHE_KEY = 'trakt-fade-cache';
-    const CACHE_VERSION = 4;
+    const CACHE_VERSION = 5;
     const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
     const MARKER_PREFIX = 'trakt-marker:invalidate:';
     const SELF_MARKER_KEY = MARKER_PREFIX + 'fork-scripts-quick-lists';
@@ -259,10 +259,23 @@
     const SECTION_ATTR = 'data-tff-section';
     const ROW_ATTR = 'data-tff-row';
     const CATEGORIES = ['started', 'watched', 'watchlisted', 'listed'];
-    const LABELS = { started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' };
+    // CATEGORIES is the cache-record iteration list (normalizeCache,
+    // categoryStale/cacheStale, buildSets' record loop). The quick-list
+    // fade categories own no cache record (their sets derive from the
+    // listed record's targets), so they must stay out of it: a
+    // record-less key would make cacheStale() permanently true and turn
+    // the scan/refresh pair into an unbounded sweep loop. FADE_CATEGORIES
+    // adds them for the fade-facing consumers only: state, the pane
+    // rows, and applyFades. Keys are the lowercased list names, so a
+    // rename stays a one-place edit; a derived key colliding with a
+    // built-in category key is out of contract for this source-edited
+    // config (same class of coupling as the ICONS table note above).
+    const QUICK_CATS = Object.fromEntries(QUICK_LIST_NAMES.map(name => [name.toLowerCase(), name]));
+    const FADE_CATEGORIES = [...CATEGORIES, ...Object.keys(QUICK_CATS)];
+    const LABELS = Object.assign({ started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' }, QUICK_CATS);
     const SAVE_BUTTON_SELECTOR = 'button[aria-label="Set filters as default"]';
 
-    const state = { watched: true, started: true, watchlisted: true, listed: true };
+    const state = Object.fromEntries(FADE_CATEGORIES.map(cat => [cat, true]));
     const storedState = readJson(STATE_KEY);
     if (storedState && typeof storedState === 'object') {
       for (const key of Object.keys(state)) {
@@ -274,9 +287,12 @@
     // except listed, which carries { counts, targets, keys, fetchedAt }
     // (see fetchListedData): counts is consulted directly by the listed
     // fade check, and keys holds the owner/slug identities that classify
-    // a viewed list as mine/saved for the containing-list exclusion. All
-    // under a top-level version stamp so a format change forces a refetch
-    // instead of serving entries the new matching logic misreads.
+    // a viewed list as mine/saved for the containing-list exclusion; each
+    // non-null target carries fadeSlugs (the full itemSlug-mapped fade
+    // membership for quick-list fade categories) and key (the lowercased
+    // owner-slug/list-slug identity for own-surface exclusion). All under
+    // a top-level version stamp so a format change forces a refetch instead
+    // of serving entries the new matching logic misreads.
     function normalizeCache(raw) {
       const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
       const cache = {};
@@ -287,7 +303,8 @@
             && rec.counts && typeof rec.counts === 'object'
             && rec.targets && typeof rec.targets === 'object'
             && Array.isArray(rec.keys)
-            && Object.values(rec.targets).every(t => t === null || (t && typeof t.id === 'number' && Array.isArray(t.slugs)));
+            && Object.values(rec.targets).every(t => t === null || (t && typeof t.id === 'number' && Array.isArray(t.slugs)
+              && Array.isArray(t.fadeSlugs) && (t.key === null || typeof t.key === 'string')));
           cache[cat] = shapeOk ? rec : null;
         } else {
           cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
@@ -298,12 +315,18 @@
 
     // No listed set: the listed fade check consults cache.listed.counts
     // directly against a per-card threshold (see applyFades), so a set
-    // would be a second derivation to keep in sync.
+    // would be a second derivation to keep in sync. The quick-list sets
+    // derive from the listed record's targets (fadeSlugs, the
+    // counts-mirroring membership), not from own cache records.
     function buildSets(cache) {
       const sets = {};
       for (const cat of CATEGORIES) {
         if (cat === 'listed') continue;
         sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
+      }
+      for (const [cat, name] of Object.entries(QUICK_CATS)) {
+        const target = cache.listed && cache.listed.targets[name];
+        sets[cat] = new Set(target ? target.fadeSlugs : []);
       }
       return sets;
     }
@@ -409,34 +432,66 @@
       const perList = await Promise.all(
         withIds.map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
       );
-      const counts = {};
-      for (const items of perList) {
-        const mapped = new Set(items.map(itemSlug).filter(Boolean));
-        for (const slug of mapped) {
-          counts[slug] = (counts[slug] || 0) + 1;
-        }
-      }
       const targets = {};
+      const quickIndices = new Set();
       for (const name of QUICK_LIST_NAMES) {
         const indices = withIds.map((list, i) => (list.name === name ? i : -1)).filter(i => i >= 0);
         if (indices.length !== 1) {
           targets[name] = null;
           continue;
         }
-        const exact = perList[indices[0]]
+        const index = indices[0];
+        quickIndices.add(index);
+        const list = withIds[index];
+        const exact = perList[index]
           .filter(item => item.type === 'show' || item.type === 'movie')
           .map(itemSlug)
           .filter(Boolean);
-        targets[name] = { id: withIds[indices[0]].ids.trakt, slugs: exact };
+        // fadeSlugs mirrors the counts/watchlisted mapping (a season or
+        // episode entry contributes its parent show) because it replaces
+        // the list's carved-out counts contribution as the fade source;
+        // slugs stays the exact show/movie membership the toggle menus
+        // need. key is the same owner/slug identity format `keys` uses,
+        // so the containing-list machinery can recognize the list's own
+        // surfaces.
+        const fadeSlugs = [...uniqueItemSlugs(perList[index])];
+        targets[name] = { id: list.ids.trakt, slugs: exact, fadeSlugs, key: listIdentityKey(list) };
       }
+      // Quick lists are carved out of counts: their membership fades via
+      // the dedicated toggles instead, mirroring how the watchlist never
+      // counted toward Listed. A name that resolved to zero or multiple
+      // lists (null target) keeps counting, so a broken target degrades
+      // to the old fade-via-Listed behavior instead of un-fading items.
+      const counts = {};
+      perList.forEach((items, i) => {
+        if (quickIndices.has(i)) {
+          return;
+        }
+        for (const slug of uniqueItemSlugs(items)) {
+          counts[slug] = (counts[slug] || 0) + 1;
+        }
+      });
       // Owner/slug identity keys let the fade threshold classify a viewed
       // list as mine/saved. Lowercased here once; URL segments are
       // lowercased at comparison time. A list missing either slug
       // contributes no key (its detail page then reads as foreign).
-      const keys = withIds
-        .filter(list => list.ids.slug && list.user && list.user.ids && list.user.ids.slug)
-        .map(list => (list.user.ids.slug + '/' + list.ids.slug).toLowerCase());
+      const keys = withIds.map(listIdentityKey).filter(Boolean);
       return { counts, targets, keys };
+    }
+
+    // Owner/slug identity ("<user slug>/<list slug>", lowercased) shared
+    // by the keys corpus and each quick target's own key; null when
+    // either slug is missing.
+    function listIdentityKey(list) {
+      return list.ids.slug && list.user && list.user.ids && list.user.ids.slug
+        ? (list.user.ids.slug + '/' + list.ids.slug).toLowerCase()
+        : null;
+    }
+
+    // Deduped membership slugs of a list's items under the itemSlug
+    // mapping (seasons and episodes contribute the parent show).
+    function uniqueItemSlugs(items) {
+      return new Set(items.map(itemSlug).filter(Boolean));
     }
 
     // Watchlist/list items are heterogeneous: shows and movies contribute their

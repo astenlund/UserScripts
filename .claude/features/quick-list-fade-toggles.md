@@ -1,6 +1,6 @@
 # Quick-list fade toggles
 
-Status: design approved 2026-08-01 (chat sign-off)
+Status: signed off 2026-08-01 15:38, content: 293a6373
 
 Add two fade categories to the Fade section in
 `trakt_improved.user.js`, one per quick list (Anticipated,

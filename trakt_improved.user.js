@@ -266,12 +266,14 @@
     // record-less key would make cacheStale() permanently true and turn
     // the scan/refresh pair into an unbounded sweep loop. FADE_CATEGORIES
     // adds them for the fade-facing consumers only: state, the pane
-    // rows, and applyFades. Keys are the lowercased list names, so a
+    // rows, and applyFades. The pane renders rows in FADE_CATEGORIES
+    // order, with the catch-all listed row last, below the quick-list
+    // rows. Keys are the lowercased list names, so a
     // rename stays a one-place edit; a derived key colliding with a
     // built-in category key is out of contract for this source-edited
     // config (same class of coupling as the ICONS table note above).
     const QUICK_CATS = Object.fromEntries(QUICK_LIST_NAMES.map(name => [name.toLowerCase(), name]));
-    const FADE_CATEGORIES = [...CATEGORIES, ...Object.keys(QUICK_CATS)];
+    const FADE_CATEGORIES = [...CATEGORIES.filter(cat => cat !== 'listed'), ...Object.keys(QUICK_CATS), 'listed'];
     const LABELS = Object.assign({ started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' }, QUICK_CATS);
     const SAVE_BUTTON_SELECTOR = 'button[aria-label="Set filters as default"]';
 

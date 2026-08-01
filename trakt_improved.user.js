@@ -1199,32 +1199,34 @@
       }, MUTATION_SETTLE_MS);
     };
 
-    // Optimistic patch, not a sweep: mutates the listed record in place
-    // (the fade check reads counts directly, so the mutation IS the
-    // patch), persists WITHOUT touching fetchedAt (stamping a patch fresh
-    // would park an unreconciled write behind the full TTL; the untouched
-    // timestamp is what lets an interrupted session heal), and queues a
-    // rescan. Deliberately approximate: the post-write forced sweep
-    // replaces it with authoritative data shortly after.
+    // Optimistic patch, not a sweep: mutates the target in place,
+    // rebuilds the derived sets so the quick-category fade flips in the
+    // same frame as the toggle icon, persists WITHOUT touching fetchedAt
+    // (stamping a patch fresh would park an unreconciled write behind
+    // the full TTL; the untouched timestamp is what lets an interrupted
+    // session heal), and queues a rescan. counts is no longer touched:
+    // quick lists are carved out of it. Deliberately approximate in the
+    // removal direction: fadeSlugs has set semantics and cannot record
+    // whether a surviving season/episode entry of the same show still
+    // justifies membership, so that rare removal transiently un-fades
+    // until the post-write forced sweep restores authoritative data.
     quickLists.applyListToggle = (name, slugKey, add) => {
       const listed = cache.listed;
       const target = listed && listed.targets[name];
       if (!target) return;
       const exact = new Set(target.slugs);
       if (add === exact.has(slugKey)) return;
+      const fadeSet = new Set(target.fadeSlugs);
       if (add) {
         exact.add(slugKey);
-        listed.counts[slugKey] = (listed.counts[slugKey] || 0) + 1;
+        fadeSet.add(slugKey);
       } else {
         exact.delete(slugKey);
-        const remaining = (listed.counts[slugKey] || 1) - 1;
-        if (remaining > 0) {
-          listed.counts[slugKey] = remaining;
-        } else {
-          delete listed.counts[slugKey];
-        }
+        fadeSet.delete(slugKey);
       }
       target.slugs = [...exact];
+      target.fadeSlugs = [...fadeSet];
+      sets = buildSets(cache);
       persistCache();
       queueScan();
     };

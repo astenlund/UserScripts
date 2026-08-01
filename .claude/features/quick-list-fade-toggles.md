@@ -386,3 +386,4 @@ v4-to-v5 rejection runs when 1.22 reaches installed copies.
 ## Hardening
 
 - revise-spec graduated 2026-08-01 16:44 at ca9de2b, scope: whole file, content: 16a45211
+- handover completed 2026-08-02 01:43 at b7fe68c, scope: whole file, content: 28ca7a95

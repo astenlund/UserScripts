@@ -800,7 +800,7 @@
       section.setAttribute(SECTION_ATTR, '1');
       title.textContent = 'Fade';
       toggles.textContent = '';
-      for (const cat of CATEGORIES) {
+      for (const cat of FADE_CATEGORIES) {
         const row = templateRow.cloneNode(true);
         const label = row.querySelector('span.secondary');
         const input = row.querySelector('input[type=checkbox]');

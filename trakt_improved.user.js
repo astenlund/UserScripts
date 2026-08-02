@@ -264,6 +264,13 @@
     let selfMarkerValue = null;
     const CACHE_TTL_MS = 15 * 60 * 1000;
     const PAGE_LIMIT = 1000;
+    // Settle window for the write-triggered corrector: longer than
+    // notifyMutation's MUTATION_SETTLE_MS because the observed server
+    // staleness already reached ~2s post-write. No settle value is
+    // sufficient alone (the lag is unbounded); the confirmed-write
+    // ledger below is the actual defense, this just cheapens the case
+    // where the forced sweep is the first post-write sweep.
+    const WRITE_SETTLE_MS = 2000;
 
     // ---- Cache records and derived sets -------------------------------
 
@@ -712,15 +719,16 @@
       }
     };
 
-    // Write-triggered flavor: waits the same settle window notifyMutation
-    // uses (the server needs time to reflect the write before a refetch,
-    // or the sweep reads pre-write state and stamps it fresh), rides the
-    // pending flag when the in-flight sweep cannot be trusted to have seen
-    // the write, and bypasses the backoff via forceRefresh. A sweep counts
-    // as covering the write only when it started AFTER the settle window
-    // closed: one that started inside the window may still have fetched
-    // pre-write state (one click, one sweep otherwise). Menu-open flavor:
-    // staleness-gated, respects backoff.
+    // Write-triggered flavor: waits a longer settle window than
+    // notifyMutation's (the server needs time to reflect the write before
+    // a refetch, or the sweep reads pre-write state and stamps it fresh),
+    // rides the pending flag when the in-flight sweep cannot be trusted to
+    // have seen the write, and bypasses the backoff via forceRefresh. A
+    // sweep counts as covering the write only when it started AFTER the
+    // settle window closed: one that started inside the window may still
+    // have fetched pre-write state (one click, one sweep otherwise), which
+    // with the widened window guarantees a post-settle sweep exists.
+    // Menu-open flavor: staleness-gated, respects backoff.
     quickLists.refreshMembership = ({ writeTriggered = false } = {}) => {
       if (!writeTriggered) {
         if (membershipStale()) queueRefresh();
@@ -729,12 +737,12 @@
       const settledAt = Date.now();
       setTimeout(() => {
         if (refreshInFlight) {
-          if (sweepStartedAt < settledAt + MUTATION_SETTLE_MS) pendingForcedRefresh = true;
+          if (sweepStartedAt < settledAt + WRITE_SETTLE_MS) pendingForcedRefresh = true;
         } else {
           forceRefresh = true;
           queueRefresh();
         }
-      }, MUTATION_SETTLE_MS);
+      }, WRITE_SETTLE_MS);
     };
 
     // Optimistic patch, not a sweep: mutates the target in place,

@@ -350,11 +350,20 @@
 
     let committedMarkers = readJson(MARKER_SNAPSHOT_KEY);
 
+    // Shared marker diff: true when any key's value in the live scan
+    // differs from the baseline snapshot, minus exempted differences.
+    // Serves both the committed-snapshot staleness check below and the
+    // ledger's per-entry foreign-write check, whose baselines carry
+    // different merge histories (committed gets the own-bump merge at
+    // commit time; note-time snapshots need a live exemption instead).
+    function markersMovedSince(baseline, current, exempt) {
+      const keys = new Set([...Object.keys(current), ...Object.keys(baseline)]);
+      return [...keys].some(key => current[key] !== baseline[key] && !(exempt && exempt(key, current[key])));
+    }
+
     function markersChanged() {
       if (!committedMarkers || typeof committedMarkers !== 'object') return true;
-      const current = currentMarkers();
-      const keys = new Set([...Object.keys(current), ...Object.keys(committedMarkers)]);
-      return [...keys].some(key => current[key] !== committedMarkers[key]);
+      return markersMovedSince(committedMarkers, currentMarkers());
     }
 
     // ---- API sweep fetchers -------------------------------------------
@@ -564,26 +573,6 @@
     let pendingForcedRefresh = false;
     let sweepStartedAt = 0;
 
-    // Confirmed-write ledger: the script's own body-judged-successful
-    // quick-toggle writes, defended against server-cache-stale corrector
-    // reads until the trust window closes. Tab-local and non-persisted on
-    // purpose: cross-tab staleness is another tab's problem to heal, and
-    // a reload inside the window is left to self-healing. Entries leave
-    // by agreement, expiry, or a foreign-write drop; past the window
-    // server truth wins unconditionally.
-    const WRITE_TRUST_WINDOW_MS = 30 * 1000;
-    const SUSPECT_RETRY_BASE_MS = 5 * 1000;
-    const confirmedWrites = new Map();
-    let nextRetryDelay = SUSPECT_RETRY_BASE_MS;
-    let retryTimer = 0;
-
-    function cancelRetryTimer() {
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-        retryTimer = 0;
-      }
-    }
-
     // A mutation-triggered refresh bypasses the failure backoff (see
     // refresh()): user actions are rare and deserve promptness. The shared
     // hook queues the scan that notices the flag; the marker mechanism stays
@@ -609,6 +598,101 @@
       committedMarkers = captured;
       writeJson(MARKER_SNAPSHOT_KEY, captured);
     }
+
+    // ---- Confirmed-write ledger ---------------------------------------
+
+    // The script's own body-judged-successful quick-toggle writes,
+    // defended against server-cache-stale corrector reads until the trust
+    // window closes. Tab-local and non-persisted on purpose: cross-tab
+    // staleness is another tab's problem to heal, and a reload inside the
+    // window is left to self-healing. Entries leave by agreement, expiry,
+    // or a foreign-write drop; past the window server truth wins
+    // unconditionally.
+    const WRITE_TRUST_WINDOW_MS = 30 * 1000;
+    const SUSPECT_RETRY_BASE_MS = 5 * 1000;
+    const confirmedWrites = new Map();
+    let nextRetryDelay = SUSPECT_RETRY_BASE_MS;
+    let retryTimer = 0;
+
+    function cancelRetryTimer() {
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = 0;
+      }
+    }
+
+    // Foreign movement relative to a ledger entry's note-time snapshot,
+    // judged against one live scan the reconcile pass shares across all
+    // entries. Compared per entry, never against the engine's committed
+    // snapshot: an unabsorbed bump that predates the write must not read
+    // as foreign to it. This tab's own later bumps are exempted via
+    // selfMarkerValue; every other difference is another writer and wins.
+    function foreignMarkersMoved(snapshot, current) {
+      return markersMovedSince(snapshot, current, (key, value) => key === SELF_MARKER_KEY && value === selfMarkerValue);
+    }
+
+    // Commit-time reconciliation: runs against the fetched listed record
+    // BEFORE it becomes cache, so every post-confirmation fetch/write
+    // interleaving is covered at the single commit point. Expiry first
+    // (with diagnostics: a still-contradicted expiry means the server
+    // never caught up and the stale-read bug recurred for that item; a
+    // missing target means the entry expired unverifiable), then the
+    // foreign-marker drop, then patch-or-agree via the shared helper,
+    // whose true return IS the contradiction signal. Suspect commits are
+    // not failures: no lastFailureAt, no backoff, no rearm.
+    function reconcileConfirmedWrites(targets, now) {
+      let suspect = false;
+      // Empty ledger: nothing to defend, and no timer can be pending
+      // (every path that empties the ledger cancels it), so skip the
+      // marker scan entirely.
+      if (confirmedWrites.size === 0) return suspect;
+      const liveMarkers = currentMarkers();
+      for (const [key, entry] of confirmedWrites) {
+        const target = targets[entry.name];
+        if (now - entry.confirmedAt > WRITE_TRUST_WINDOW_MS) {
+          if (!target) {
+            warn(`Confirmed ${entry.add ? 'add' : 'remove'} of ${entry.slugKey} expired unverifiable; list "${entry.name}" never re-resolved`);
+          } else if (target.slugs.includes(entry.slugKey) !== entry.add) {
+            warn(`Confirmed ${entry.add ? 'add' : 'remove'} of ${entry.slugKey} expired still contradicted; the server never caught up`);
+          }
+          confirmedWrites.delete(key);
+          continue;
+        }
+        if (foreignMarkersMoved(entry.markers, liveMarkers)) {
+          confirmedWrites.delete(key);
+          continue;
+        }
+        if (!target) continue;
+        if (patchTargetMembership(target, entry.slugKey, entry.add)) {
+          suspect = true;
+        } else {
+          confirmedWrites.delete(key);
+        }
+      }
+      if (confirmedWrites.size === 0) cancelRetryTimer();
+      return suspect;
+    }
+
+    // One pending retry at a time; the ladder (5s, 10s, 20s) advances
+    // only when a retry is actually scheduled, so the two early sweeps
+    // one write can produce advance it at most once. The trust window
+    // terminates the loop: a retry firing past it prunes the entry and
+    // commits server truth.
+    function scheduleSuspectResweep() {
+      if (retryTimer) return;
+      retryTimer = setTimeout(() => {
+        retryTimer = 0;
+        if (refreshInFlight) {
+          pendingForcedRefresh = true;
+        } else {
+          forceRefresh = true;
+          queueRefresh();
+        }
+      }, nextRetryDelay);
+      nextRetryDelay *= 2;
+    }
+
+    // ---- Sweep execution ----------------------------------------------
 
     // Single-flight, atomic per category: a category's record is replaced only
     // when every fetch it depends on succeeded; otherwise it keeps its stale
@@ -662,8 +746,10 @@
         }
 
         if (listed.status === 'fulfilled') {
+          const suspect = reconcileConfirmedWrites(listed.value.targets, now);
           cache.listed = Object.assign({}, listed.value, { fetchedAt: now });
           changed = true;
+          if (suspect) scheduleSuspectResweep();
         } else {
           anyFailed = true;
           warn('List-membership refresh failed; keeping stale data', listed.reason);

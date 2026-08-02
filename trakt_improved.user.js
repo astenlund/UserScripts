@@ -217,27 +217,39 @@
     return result;
   };
 
-  // Shared surface between the fade feature (which owns the membership
-  // sweep) and the quick list toggles feature (which renders and writes
-  // against it). The list names are resolved by display name, not slug:
+  // Shared surface between the list-membership engine below (which owns
+  // the sweep and populates it) and the quick list toggles feature (which
+  // renders and writes against it). The list names are resolved by display
+  // name, not slug:
   // the Uninterested list's slug is UUID-suffixed. Names are user config,
   // edited in-source; the ICONS table in the toggles feature is keyed by
   // these same names, so a rename must touch both.
   const QUICK_LIST_NAMES = ['Anticipated', 'Uninterested'];
   const quickLists = {};
 
+  // Fade-category vocabulary shared by the membership engine and the fade
+  // feature. CATEGORIES is the cache-record iteration list (normalizeCache,
+  // categoryStale/cacheStale, buildSets' record loop). The quick-list fade
+  // categories own no cache record (their sets derive from the listed
+  // record's targets), so they must stay out of it: a record-less key
+  // would make cacheStale() permanently true and turn the scan/refresh
+  // pair into an unbounded sweep loop. QUICK_CATS keys them by lowercased
+  // list name, so a rename stays a one-place edit; a derived key colliding
+  // with a built-in category key is out of contract for this source-edited
+  // config (same class of coupling as the ICONS table note above).
+  const CATEGORIES = ['started', 'watched', 'watchlisted', 'listed'];
+  const QUICK_CATS = Object.fromEntries(QUICK_LIST_NAMES.map(name => [name.toLowerCase(), name]));
+
   // ---------------------------------------------------------------------
-  // Feature: fade filters
-  // Restores fade/dim filtering: adds a Fade section to the filter pane and
-  // fades watched/started/watchlisted/listed posters, with hover-to-reveal.
-  // Supersedes the app's own watched-item fade (is-deemphasized), which is
-  // neutralized so the two treatments never stack. Also owns the membership
-  // sweep and cache that the quick list toggles feature consumes through
-  // the shared quickLists surface.
+  // List-membership engine
+  // Owns the membership cache (watched/started/watchlisted/listed data
+  // swept from the API), the single-flight refresh that maintains it, and
+  // the cross-tab invalidation markers. Serves two consumers: it populates
+  // the quickLists surface for the toggles feature and returns the read
+  // surface the fade feature renders from.
   // ---------------------------------------------------------------------
 
-  (function initFadeFilters() {
-    const STATE_KEY = 'trakt-fade-filters';
+  const membership = (function initListMembership() {
     const CACHE_KEY = 'trakt-fade-cache';
     const CACHE_VERSION = 5;
     const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
@@ -250,40 +262,10 @@
     // the live value may carry another tab's bump, which must stay foreign
     // for its invalidation to trip this tab.
     let selfMarkerValue = null;
-    const MODE_KEY = 'trakt_toggler_discover';
     const CACHE_TTL_MS = 15 * 60 * 1000;
     const PAGE_LIMIT = 1000;
-    const FADE_CLASS = 'tff-fade';
-    const LIGHT_CLASS = 'tff-light';
-    const STYLE_ID = 'tff-style';
-    const SECTION_ATTR = 'data-tff-section';
-    const ROW_ATTR = 'data-tff-row';
-    const CATEGORIES = ['started', 'watched', 'watchlisted', 'listed'];
-    // CATEGORIES is the cache-record iteration list (normalizeCache,
-    // categoryStale/cacheStale, buildSets' record loop). The quick-list
-    // fade categories own no cache record (their sets derive from the
-    // listed record's targets), so they must stay out of it: a
-    // record-less key would make cacheStale() permanently true and turn
-    // the scan/refresh pair into an unbounded sweep loop. FADE_CATEGORIES
-    // adds them for the fade-facing consumers only: state, the pane
-    // rows, and applyFades. The pane renders rows in FADE_CATEGORIES
-    // order, with the catch-all listed row last, below the quick-list
-    // rows. Keys are the lowercased list names, so a
-    // rename stays a one-place edit; a derived key colliding with a
-    // built-in category key is out of contract for this source-edited
-    // config (same class of coupling as the ICONS table note above).
-    const QUICK_CATS = Object.fromEntries(QUICK_LIST_NAMES.map(name => [name.toLowerCase(), name]));
-    const FADE_CATEGORIES = [...CATEGORIES.filter(cat => cat !== 'listed'), ...Object.keys(QUICK_CATS), 'listed'];
-    const LABELS = Object.assign({ started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' }, QUICK_CATS);
-    const SAVE_BUTTON_SELECTOR = 'button[aria-label="Set filters as default"]';
 
-    const state = Object.fromEntries(FADE_CATEGORIES.map(cat => [cat, true]));
-    const storedState = readJson(STATE_KEY);
-    if (storedState && typeof storedState === 'object') {
-      for (const key of Object.keys(state)) {
-        if (typeof storedState[key] === 'boolean') state[key] = storedState[key];
-      }
-    }
+    // ---- Cache records and derived sets -------------------------------
 
     // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
     // except listed, which carries { counts, targets, keys, fetchedAt }
@@ -340,6 +322,8 @@
       writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
     }
 
+    // ---- Cross-tab invalidation markers -------------------------------
+
     // Marker snapshot: captured at refresh start, committed when the refresh
     // commits, so an app action landing mid-refresh still triggers a follow-up.
     function currentMarkers() {
@@ -359,6 +343,8 @@
       const keys = new Set([...Object.keys(current), ...Object.keys(committedMarkers)]);
       return [...keys].some(key => current[key] !== committedMarkers[key]);
     }
+
+    // ---- API sweep fetchers -------------------------------------------
 
     async function fetchPage(auth, path, page) {
       const url = apiUrl(path);
@@ -539,6 +525,8 @@
         .filter(Boolean);
     }
 
+    // ---- Sweep scheduling ---------------------------------------------
+
     function categoryStale(cat) {
       return !cache[cat] || Date.now() - cache[cat].fetchedAt > CACHE_TTL_MS;
     }
@@ -675,6 +663,160 @@
         warn('Refresh failed unexpectedly', e);
         lastFailureAt = Date.now();
       });
+    }
+
+    // ---- Consumer surfaces --------------------------------------------
+
+    // The full staleness condition for membership data mirrors the fade
+    // scan's own refresh trigger: TTL age alone would miss app-driven
+    // changes (a native Manage-lists tick sets the mutation-forced flag;
+    // another tab's change lands via the invalidation markers), leaving
+    // toggle icons wrong for the full TTL on pages where the fade scan
+    // (and with it the scan-triggered refresh) is inactive.
+    function membershipStale() {
+      return forceRefresh || rearmedRefresh || markersChanged() || categoryStale('listed');
+    }
+
+    quickLists.membershipState = () => {
+      if (!cache.listed) return 'absent';
+      return membershipStale() ? 'stale' : 'fresh';
+    };
+
+    // null strictly means "data exists but the name resolved to zero or
+    // multiple lists"; callers must gate on membershipState() !== 'absent'
+    // before consulting targets, so the two no-entry states stay distinct.
+    quickLists.getListTarget = name => {
+      if (!cache.listed || !cache.listed.targets[name]) return null;
+      const target = cache.listed.targets[name];
+      return { id: target.id, has: slugKey => target.slugs.includes(slugKey) };
+    };
+
+    // Cross-tab propagation for the toggles feature's sandbox-fetch writes,
+    // which other tabs' page-fetch hooks never see: bump a script-owned key
+    // under the app's invalidation-marker prefix (markersChanged() prefix-
+    // scans it in every tab). Recording the value into this tab's committed
+    // snapshot at bump time keeps the bump invisible here, so it cannot
+    // launch a pre-settle sweep in the tab that just wrote.
+    quickLists.bumpInvalidationMarker = () => {
+      const value = String(Date.now());
+      try {
+        localStorage.setItem(SELF_MARKER_KEY, value);
+      } catch {
+        // Bump is best-effort; other tabs heal on TTL without it.
+        return;
+      }
+      selfMarkerValue = value;
+      if (committedMarkers && typeof committedMarkers === 'object') {
+        committedMarkers[SELF_MARKER_KEY] = value;
+        writeJson(MARKER_SNAPSHOT_KEY, committedMarkers);
+      }
+    };
+
+    // Write-triggered flavor: waits the same settle window notifyMutation
+    // uses (the server needs time to reflect the write before a refetch,
+    // or the sweep reads pre-write state and stamps it fresh), rides the
+    // pending flag when the in-flight sweep cannot be trusted to have seen
+    // the write, and bypasses the backoff via forceRefresh. A sweep counts
+    // as covering the write only when it started AFTER the settle window
+    // closed: one that started inside the window may still have fetched
+    // pre-write state (one click, one sweep otherwise). Menu-open flavor:
+    // staleness-gated, respects backoff.
+    quickLists.refreshMembership = ({ writeTriggered = false } = {}) => {
+      if (!writeTriggered) {
+        if (membershipStale()) queueRefresh();
+        return;
+      }
+      const settledAt = Date.now();
+      setTimeout(() => {
+        if (refreshInFlight) {
+          if (sweepStartedAt < settledAt + MUTATION_SETTLE_MS) pendingForcedRefresh = true;
+        } else {
+          forceRefresh = true;
+          queueRefresh();
+        }
+      }, MUTATION_SETTLE_MS);
+    };
+
+    // Optimistic patch, not a sweep: mutates the target in place,
+    // rebuilds the derived sets so the quick-category fade flips in the
+    // same frame as the toggle icon, persists WITHOUT touching fetchedAt
+    // (stamping a patch fresh would park an unreconciled write behind
+    // the full TTL; the untouched timestamp is what lets an interrupted
+    // session heal), and queues a rescan. counts is no longer touched:
+    // quick lists are carved out of it. Deliberately approximate in the
+    // removal direction: fadeSlugs has set semantics and cannot record
+    // whether a surviving season/episode entry of the same show still
+    // justifies membership, so that rare removal transiently un-fades
+    // until the post-write forced sweep restores authoritative data.
+    quickLists.applyListToggle = (name, slugKey, add) => {
+      const listed = cache.listed;
+      const target = listed && listed.targets[name];
+      if (!target) return;
+      const exact = new Set(target.slugs);
+      if (add === exact.has(slugKey)) return;
+      const fadeSet = new Set(target.fadeSlugs);
+      if (add) {
+        exact.add(slugKey);
+        fadeSet.add(slugKey);
+      } else {
+        exact.delete(slugKey);
+        fadeSet.delete(slugKey);
+      }
+      target.slugs = [...exact];
+      target.fadeSlugs = [...fadeSet];
+      sets = buildSets(cache);
+      persistCache();
+      queueScan();
+    };
+
+    // Read surface for the fade feature. sets is reassigned on rebuild,
+    // so it is exposed as an accessor, never as a captured reference.
+    // needsRefresh is the fade scan's sweep trigger: any category stale,
+    // a forced or re-armed sweep pending, or foreign marker movement.
+    return {
+      sets: () => sets,
+      listedCounts: () => (cache.listed ? cache.listed.counts : {}),
+      listedKeys: () => (cache.listed ? cache.listed.keys : []),
+      quickTargetKey: name => {
+        const target = cache.listed && cache.listed.targets[name];
+        return target ? target.key : null;
+      },
+      needsRefresh: () => forceRefresh || rearmedRefresh || cacheStale() || markersChanged(),
+      queueRefresh,
+    };
+  })();
+
+  // ---------------------------------------------------------------------
+  // Feature: fade filters
+  // Restores fade/dim filtering: adds a Fade section to the filter pane and
+  // fades watched/started/watchlisted/listed posters, with hover-to-reveal.
+  // Supersedes the app's own watched-item fade (is-deemphasized), which is
+  // neutralized so the two treatments never stack. Renders from the
+  // list-membership engine's read surface above.
+  // ---------------------------------------------------------------------
+
+  (function initFadeFilters() {
+    const STATE_KEY = 'trakt-fade-filters';
+    const MODE_KEY = 'trakt_toggler_discover';
+    const FADE_CLASS = 'tff-fade';
+    const LIGHT_CLASS = 'tff-light';
+    const STYLE_ID = 'tff-style';
+    const SECTION_ATTR = 'data-tff-section';
+    const ROW_ATTR = 'data-tff-row';
+    // FADE_CATEGORIES adds the quick-list categories to the shared
+    // cache-record categories for the fade-facing consumers: state, the
+    // pane rows, and applyFades. The pane renders rows in FADE_CATEGORIES
+    // order, with the catch-all listed row last, below the quick-list rows.
+    const FADE_CATEGORIES = [...CATEGORIES.filter(cat => cat !== 'listed'), ...Object.keys(QUICK_CATS), 'listed'];
+    const LABELS = Object.assign({ started: 'Started', watched: 'Watched', watchlisted: 'Watchlisted', listed: 'Listed' }, QUICK_CATS);
+    const SAVE_BUTTON_SELECTOR = 'button[aria-label="Set filters as default"]';
+
+    const state = Object.fromEntries(FADE_CATEGORIES.map(cat => [cat, true]));
+    const storedState = readJson(STATE_KEY);
+    if (storedState && typeof storedState === 'object') {
+      for (const key of Object.keys(state)) {
+        if (typeof storedState[key] === 'boolean') state[key] = storedState[key];
+      }
     }
 
     function injectStyles() {
@@ -897,7 +1039,7 @@
     function listKeyKnown(owner, slug) {
       if (owner === 'me') return true;
       const key = (owner + '/' + slug).toLowerCase();
-      return Boolean(cache.listed) && cache.listed.keys.includes(key);
+      return membership.listedKeys().includes(key);
     }
 
     // A target with key null (list missing its own or its owner's slug)
@@ -905,10 +1047,10 @@
     // toggle; accepted degradation per the spec's Failure modes.
     function quickCatFor(owner, slug) {
       for (const [cat, name] of Object.entries(QUICK_CATS)) {
-        const target = cache.listed && cache.listed.targets[name];
-        if (!target || !target.key) continue;
-        const listSlug = target.key.split('/')[1];
-        if (owner === 'me' ? slug === listSlug : owner + '/' + slug === target.key) return cat;
+        const key = membership.quickTargetKey(name);
+        if (!key) continue;
+        const listSlug = key.split('/')[1];
+        if (owner === 'me' ? slug === listSlug : owner + '/' + slug === key) return cat;
       }
       return null;
     }
@@ -1051,7 +1193,8 @@
       const fadeCats = FADE_CATEGORIES.filter(cat => state[cat]);
       const setCats = fadeCats.filter(cat => cat !== 'listed');
       const listedOn = fadeCats.includes('listed');
-      const counts = cache.listed ? cache.listed.counts : {};
+      const sets = membership.sets();
+      const counts = membership.listedCounts();
       const verdictFor = contributionResolver(context);
       for (const card of document.querySelectorAll('div.trakt-card')) {
         const target = cardTarget(card);
@@ -1091,8 +1234,8 @@
       injectStyles();
       ensureFadeSection();
       applyFades(context);
-      if (forceRefresh || rearmedRefresh || cacheStale() || markersChanged()) {
-        queueRefresh();
+      if (membership.needsRefresh()) {
+        membership.queueRefresh();
       }
     }
 
@@ -1130,108 +1273,6 @@
         writeJson(STATE_KEY, state);
       }
     });
-
-    // The full staleness condition for membership data mirrors the fade
-    // scan's own refresh trigger: TTL age alone would miss app-driven
-    // changes (a native Manage-lists tick sets the mutation-forced flag;
-    // another tab's change lands via the invalidation markers), leaving
-    // toggle icons wrong for the full TTL on pages where the fade scan
-    // (and with it the scan-triggered refresh) is inactive.
-    function membershipStale() {
-      return forceRefresh || rearmedRefresh || markersChanged() || categoryStale('listed');
-    }
-
-    quickLists.membershipState = () => {
-      if (!cache.listed) return 'absent';
-      return membershipStale() ? 'stale' : 'fresh';
-    };
-
-    // null strictly means "data exists but the name resolved to zero or
-    // multiple lists"; callers must gate on membershipState() !== 'absent'
-    // before consulting targets, so the two no-entry states stay distinct.
-    quickLists.getListTarget = name => {
-      if (!cache.listed || !cache.listed.targets[name]) return null;
-      const target = cache.listed.targets[name];
-      return { id: target.id, has: slugKey => target.slugs.includes(slugKey) };
-    };
-
-    // Cross-tab propagation for the toggles feature's sandbox-fetch writes,
-    // which other tabs' page-fetch hooks never see: bump a script-owned key
-    // under the app's invalidation-marker prefix (markersChanged() prefix-
-    // scans it in every tab). Recording the value into this tab's committed
-    // snapshot at bump time keeps the bump invisible here, so it cannot
-    // launch a pre-settle sweep in the tab that just wrote.
-    quickLists.bumpInvalidationMarker = () => {
-      const value = String(Date.now());
-      try {
-        localStorage.setItem(SELF_MARKER_KEY, value);
-      } catch {
-        // Bump is best-effort; other tabs heal on TTL without it.
-        return;
-      }
-      selfMarkerValue = value;
-      if (committedMarkers && typeof committedMarkers === 'object') {
-        committedMarkers[SELF_MARKER_KEY] = value;
-        writeJson(MARKER_SNAPSHOT_KEY, committedMarkers);
-      }
-    };
-
-    // Write-triggered flavor: waits the same settle window notifyMutation
-    // uses (the server needs time to reflect the write before a refetch,
-    // or the sweep reads pre-write state and stamps it fresh), rides the
-    // pending flag when the in-flight sweep cannot be trusted to have seen
-    // the write, and bypasses the backoff via forceRefresh. A sweep counts
-    // as covering the write only when it started AFTER the settle window
-    // closed: one that started inside the window may still have fetched
-    // pre-write state (one click, one sweep otherwise). Menu-open flavor:
-    // staleness-gated, respects backoff.
-    quickLists.refreshMembership = ({ writeTriggered = false } = {}) => {
-      if (!writeTriggered) {
-        if (membershipStale()) queueRefresh();
-        return;
-      }
-      const settledAt = Date.now();
-      setTimeout(() => {
-        if (refreshInFlight) {
-          if (sweepStartedAt < settledAt + MUTATION_SETTLE_MS) pendingForcedRefresh = true;
-        } else {
-          forceRefresh = true;
-          queueRefresh();
-        }
-      }, MUTATION_SETTLE_MS);
-    };
-
-    // Optimistic patch, not a sweep: mutates the target in place,
-    // rebuilds the derived sets so the quick-category fade flips in the
-    // same frame as the toggle icon, persists WITHOUT touching fetchedAt
-    // (stamping a patch fresh would park an unreconciled write behind
-    // the full TTL; the untouched timestamp is what lets an interrupted
-    // session heal), and queues a rescan. counts is no longer touched:
-    // quick lists are carved out of it. Deliberately approximate in the
-    // removal direction: fadeSlugs has set semantics and cannot record
-    // whether a surviving season/episode entry of the same show still
-    // justifies membership, so that rare removal transiently un-fades
-    // until the post-write forced sweep restores authoritative data.
-    quickLists.applyListToggle = (name, slugKey, add) => {
-      const listed = cache.listed;
-      const target = listed && listed.targets[name];
-      if (!target) return;
-      const exact = new Set(target.slugs);
-      if (add === exact.has(slugKey)) return;
-      const fadeSet = new Set(target.fadeSlugs);
-      if (add) {
-        exact.add(slugKey);
-        fadeSet.add(slugKey);
-      } else {
-        exact.delete(slugKey);
-        fadeSet.delete(slugKey);
-      }
-      target.slugs = [...exact];
-      target.fadeSlugs = [...fadeSet];
-      sets = buildSets(cache);
-      persistCache();
-      queueScan();
-    };
 
     scanCallbacks.push(scan);
   })();
@@ -2359,7 +2400,8 @@
   // Feature: quick list toggles
   // One-click Anticipated/Uninterested membership toggles in the card
   // popup menu and the summary-page actions menu, with optimistic fade
-  // sync. Membership data rides the fade feature's sweep via quickLists.
+  // sync. Membership data rides the list-membership engine's sweep via
+  // quickLists.
   // ---------------------------------------------------------------------
 
   (function initQuickListToggles() {
@@ -2392,8 +2434,9 @@
     const inFlight = new Set();
     let toastTimer = 0;
 
-    // The membership key format shared with the fade cache (itemSlug's
-    // 'movie:<slug>' / 'show:<slug>'), built in one place.
+    // The membership key format shared with the membership engine's
+    // cache (itemSlug's 'movie:<slug>' / 'show:<slug>'), built in one
+    // place.
     const slugKeyOf = (type, slug) => `${type}:${slug}`;
 
     // Card identity: an eligible poster link has a bare two-segment

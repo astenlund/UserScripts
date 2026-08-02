@@ -27,7 +27,7 @@ not to resolve dependencies.
 ## Entries
 
 - **initFadeFilters has outgrown single-closure comprehension** (shipped
-  2026-08-02, commits c8f764f and ca881e5, Trakt Improved 1.25). The
+  2026-08-02, commits f9ef49a and fc9abbb, Trakt Improved 1.25). The
   backlog entry staged the work as banner-grouping first, then a
   considered split of the URL-classification and sweep machinery into
   sibling closures. Shipped shape: the membership cache, cross-tab

@@ -173,6 +173,20 @@ is struck through. As each slice ships, append its entry to
 new next-to-ship slice's gates, and walk every other `**Requires:**`
 line in `FEATURES.md` / `BUGS.md` to drop now-satisfied references.
 
+## trakt_improved.user.js
+
+### [Popup menu scroll shield](features/popup-menu-scroll-shield.md)
+
+Keep the card and list-page popup menus open while the page scrolls,
+so menus taller than the remaining viewport (common now that injected
+quick-list rows grow them) can be scrolled into full view. Two window
+capture-phase passive listeners swallow `wheel` and `scroll` while a
+popup container is on screen; once the menu is fully outside the
+viewport the events pass through again and the app closes its own
+menu. Mechanism verified live against app.trakt.tv (2026-08-02).
+
+**Requires:** none.
+
 ## Exploring
 
 Pre-dependency-analysis brainstorms live here. An entry is a draft

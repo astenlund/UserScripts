@@ -194,11 +194,13 @@ Alternatives considered and rejected:
   closure, so neither refactor blocks it or is blocked by it; any
   landing order works.
 - QUICK_WINS.md "Write-triggered membership refresh can read
-  server-cache-stale list items" and BUGS.md "Cross-tab list adds
-  miss the fade treatment until it eventually self-heals": membership
-  sweep machinery driven by timers and fetch hooks, with no scroll
-  path. The shield neither touches nor delays the sweeps, so neither
-  entry is affected in either direction; landing order is free.
+  server-cache-stale list items" (shipped 2026-08-03 in Trakt
+  Improved 1.26, archived in QUICK_WINS_HISTORY.md) and BUGS.md
+  "Cross-tab list adds miss the fade treatment until it eventually
+  self-heals" (still open): membership sweep machinery driven by
+  timers and fetch hooks, with no scroll path. The shield neither
+  touches nor delays the sweeps, so neither was affected in either
+  direction.
 
 ## Testing
 

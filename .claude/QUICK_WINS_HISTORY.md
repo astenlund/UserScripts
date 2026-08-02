@@ -52,3 +52,43 @@ not to resolve dependencies.
   section" quick win thins it from the shared-plumbing side instead.
   Both closures carry `// ---- <section> ----` banners; the pane
   save-button listener moved next to the filter-pane code it serves.
+- **Write-triggered membership refresh can read server-cache-stale list
+  items** (shipped 2026-08-03, commits 86274d8..fd9a43b plus review
+  fixups 917b73c and a1133ed, Trakt Improved 1.26). Observed live
+  2026-07-28: the corrector sweep fetched `/users/me/lists/{id}/items`
+  about 2s after a confirmed add and got pre-write state, reverting the
+  optimistic toggle icon (and, since 1.21/1.22, the quick-category
+  fade). Shipped shape: a tab-local confirmed-write ledger in the
+  membership engine defends body-judged-successful quick-toggle writes
+  for a 30s trust window (`WRITE_TRUST_WINDOW_MS`); `refresh()`
+  reconciles fetched `listed` data against the ledger at commit time,
+  patching contradictions pre-commit via the extracted
+  `patchTargetMembership` helper (exact-membership guard INSIDE, so a
+  no-op touches neither `slugs` nor `fadeSlugs`, protecting
+  season-backed fades on the agree path) and scheduling an escalating
+  re-sweep (single timer, 5/10/20s ladder, advances at most once while
+  a timer pends, reset on new writes, cancelled when the ledger
+  empties). Other writers always win via two drop signals: the page
+  fetch hook's successful-native-write branch, and per-entry marker
+  snapshots (captured at `noteConfirmedWrite` time, compared with a
+  `SELF_MARKER_KEY`/`selfMarkerValue` exemption; `bumpInvalidationMarker`
+  reads the live key before overwriting so a foreign bump's evidence is
+  acted on before it is destroyed). `WRITE_SETTLE_MS = 2000` widened
+  the write-triggered corrector's settle and coverage check
+  (`MUTATION_SETTLE_MS` stayed 1000 for `notifyMutation`). Rejected
+  alternatives recorded in the design: blind settle lengthening for
+  native writes (guess against unbounded lag), patch-time ledgering
+  (a failed write would defend phantom state), cache-defeating
+  corrector reads (untested; the ledger is lag-agnostic and a buster
+  cannot reach server-internal replication lag). Known accepted holes:
+  the pre-confirmation window (a sweep committing during the POST round
+  trip finds no entry yet; self-heals at the forced sweep), the coarse
+  whole-ledger drops, and the read-then-write instant in the bump.
+  E2e-verified live 2026-08-03 with a namespaced injected build and
+  real writes: both simulated-lag directions held with the designed
+  retry ladder and agree-drops, and two no-simulation probes confirmed
+  Trakt's real list-items cache caught up within the trust window with
+  zero reverts (live-claim probed). Design hardened through a
+  6-iteration revise-spec loop whose reviewers caught, pre-code, the
+  helper guard-order defect, the marker-drop ordering hole, and the
+  null-target prune crash.

@@ -78,7 +78,15 @@ Since quick-list-fade-toggles shipped (Trakt Improved 1.22),
 `applyListToggle` no longer patches counts (it patches the target's
 `slugs` and `fadeSlugs` and rebuilds the derived sets), so the write-path
 diagnosis reasons about a simpler optimistic surface; see the
-Interactions section in `features/quick-list-fade-toggles.md`.
+Interactions section in `features/quick-list-fade-toggles.md`. Since
+the stale-membership corrector shipped (Trakt Improved 1.26), the
+`if (ok)` ledger gate in `performToggle` keys on exactly the
+body-judged success signal this bug distrusts: a wrongly-false `ok`
+leaves the corrector's protection inert for that write, and a
+wrongly-true one records a phantom confirmed write that reconciliation
+defends for up to its 30s trust window. A fix that changes how `ok` is
+judged is inherited by the gate automatically, since it reads the same
+variable.
 
 **Requires:** none.
 
@@ -89,10 +97,14 @@ especially when the add is made in another tab. Refreshing the page does
 not fix it; it sorts itself out eventually (presumably when a cached
 membership snapshot expires and refetches). Undiagnosed stub: fade-cache
 invalidation likely only reacts to writes seen by the local tab's fetch
-hook, so out-of-tab writes wait out the cache lifetime. Adjacent to the
-QUICK_WINS.md entry "Write-triggered membership refresh can read
-server-cache-stale list items", which covers the same server-side
-caching territory from the same-tab side. Since fade-on-list-pages
+hook, so out-of-tab writes wait out the cache lifetime. The same-tab
+side of this server-cache staleness was fixed by the QUICK_WINS.md
+entry "Write-triggered membership refresh can read server-cache-stale
+list items" (shipped 2026-08-03 in Trakt Improved 1.26, archived in
+QUICK_WINS_HISTORY.md): confirmed same-tab quick-toggle writes are now
+defended by a 30s confirmed-write ledger. The ledger deliberately
+yields to foreign-write signals (another tab's marker movement), so
+the cross-tab window this bug describes is unchanged by it. Since fade-on-list-pages
 shipped (Trakt Improved 1.21), fades render on list surfaces too, so
 the missing-fade window is visible there as well; see the Interactions
 section in `features/fade-on-list-pages.md`. Quick-list fades (Trakt

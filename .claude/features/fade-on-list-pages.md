@@ -320,19 +320,17 @@ increase).
 
 ## Interactions with open backlog work
 
-Two backlog entries touch the same membership machinery:
+Two backlog entries touched the same membership machinery:
 QUICK_WINS.md's "Write-triggered membership refresh can read
-server-cache-stale list items" (same-tab write-settle tuning) and
-BUGS.md's "Cross-tab list adds miss the fade treatment until it
-eventually self-heals" (out-of-tab invalidation). This feature widens
-where sweeps start and where fades render but changes no sweep
-mechanics, so it neither fixes nor worsens either entry, and the code
-overlap is disjoint: they tune `MUTATION_SETTLE_MS` and the
-write-triggered flavor of `refreshMembership`; this feature touches
-`fadingActive`, `applyFades`, `fetchListedData`, `normalizeCache`,
-`buildSets`, and one line of `applyListToggle`. Cheapest landing
-order: this feature first, so the staleness work tunes the final
-shape of the listed derivation once.
+server-cache-stale list items" (shipped 2026-08-03 in Trakt Improved
+1.26, archived in QUICK_WINS_HISTORY.md: it added `WRITE_SETTLE_MS`
+and a confirmed-write ledger with commit-time reconciliation, keeping
+`MUTATION_SETTLE_MS` at 1000ms) and BUGS.md's still-open "Cross-tab
+list adds miss the fade treatment until it eventually self-heals"
+(out-of-tab invalidation). This feature widened where sweeps start
+and where fades render but changed no sweep mechanics, and the
+landing order played out as recorded: this feature first, so the
+staleness work tuned the final shape of the listed derivation once.
 
 A third entry contends on the exact function this feature edits:
 BUGS.md's "Anticipated/Uninterested quick toggles rarely take effect,

@@ -373,11 +373,13 @@ v4-to-v5 rejection runs when 1.22 reaches installed copies.
   as a regression here. Landing order: this feature first, so the
   diagnosis reasons about the simpler surface.
 - QUICK_WINS.md "Write-triggered membership refresh can read
-  server-cache-stale list items" and BUGS.md "Cross-tab list adds
-  miss the fade treatment": unchanged sweep mechanics, so neither
-  is fixed nor worsened; a stale corrector read can now also revert
-  a quick-list fade, the same exposure the shipped listed fade
-  already has.
+  server-cache-stale list items" (shipped 2026-08-03 in Trakt
+  Improved 1.26, archived in QUICK_WINS_HISTORY.md) and BUGS.md
+  "Cross-tab list adds miss the fade treatment" (still open): this
+  feature changed no sweep mechanics. The stale-corrector exposure
+  it noted for quick-list fades was since closed for same-tab
+  confirmed writes by the 1.26 confirmed-write ledger; the
+  cross-tab window remains with the open bug.
 - QUICK_WINS.md "Lift a shared list-URL parser" and the closure-split
   refactor "initFadeFilters has outgrown single-closure comprehension"
   (shipped 2026-08-02, archived in QUICK_WINS_HISTORY.md): this

@@ -745,23 +745,20 @@
       }, WRITE_SETTLE_MS);
     };
 
-    // Optimistic patch, not a sweep: mutates the target in place,
-    // rebuilds the derived sets so the quick-category fade flips in the
-    // same frame as the toggle icon, persists WITHOUT touching fetchedAt
-    // (stamping a patch fresh would park an unreconciled write behind
-    // the full TTL; the untouched timestamp is what lets an interrupted
-    // session heal), and queues a rescan. counts is no longer touched:
-    // quick lists are carved out of it. Deliberately approximate in the
-    // removal direction: fadeSlugs has set semantics and cannot record
-    // whether a surviving season/episode entry of the same show still
-    // justifies membership, so that rare removal transiently un-fades
-    // until the post-write forced sweep restores authoritative data.
-    quickLists.applyListToggle = (name, slugKey, add) => {
-      const listed = cache.listed;
-      const target = listed && listed.targets[name];
-      if (!target) return;
+    // Shared membership patch for the optimistic toggle and the sweep's
+    // commit-time reconciliation. The exact-membership guard lives INSIDE
+    // and short-circuits BEFORE either set is touched: fadeSlugs is a
+    // strict superset of slugs (a season entry contributes its parent
+    // show), so patching fadeSlugs on a no-op would strip a legitimately
+    // season-backed fade from otherwise-agreeing data. Deliberately
+    // approximate in the removal direction: fadeSlugs has set semantics
+    // and cannot record whether a surviving season/episode entry of the
+    // same show still justifies membership, so that rare removal
+    // transiently un-fades until a later sweep restores authoritative
+    // data. Returns whether exact membership changed.
+    function patchTargetMembership(target, slugKey, add) {
       const exact = new Set(target.slugs);
-      if (add === exact.has(slugKey)) return;
+      if (add === exact.has(slugKey)) return false;
       const fadeSet = new Set(target.fadeSlugs);
       if (add) {
         exact.add(slugKey);
@@ -772,6 +769,21 @@
       }
       target.slugs = [...exact];
       target.fadeSlugs = [...fadeSet];
+      return true;
+    }
+
+    // Optimistic patch, not a sweep: mutates the target in place,
+    // rebuilds the derived sets so the quick-category fade flips in the
+    // same frame as the toggle icon, persists WITHOUT touching fetchedAt
+    // (stamping a patch fresh would park an unreconciled write behind
+    // the full TTL; the untouched timestamp is what lets an interrupted
+    // session heal), and queues a rescan. counts is no longer touched:
+    // quick lists are carved out of it.
+    quickLists.applyListToggle = (name, slugKey, add) => {
+      const listed = cache.listed;
+      const target = listed && listed.targets[name];
+      if (!target) return;
+      if (!patchTargetMembership(target, slugKey, add)) return;
       sets = buildSets(cache);
       persistCache();
       queueScan();

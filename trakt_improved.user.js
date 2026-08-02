@@ -819,6 +819,8 @@
       }
     }
 
+    // ---- Fade styles --------------------------------------------------
+
     function injectStyles() {
       if (document.getElementById(STYLE_ID)) return;
       const style = document.createElement('style');
@@ -925,6 +927,8 @@
       document.head.appendChild(style);
     }
 
+    // ---- Filter pane --------------------------------------------------
+
     function activeMode() {
       const urlMode = new URLSearchParams(location.search).get('mode');
       if (urlMode) return urlMode;
@@ -985,6 +989,19 @@
       const startedRow = section.querySelector(`[${ROW_ATTR}="started"]`);
       if (startedRow) startedRow.style.display = activeMode() === 'movie' ? 'none' : '';
     }
+
+    // Fade toggles apply in-memory immediately but persist only when the user
+    // clicks the pane's save button ("Set filters as default", matched by
+    // aria-label since the surrounding bits-* ids are regenerated per render);
+    // a reload reverts unsaved toggles to the last saved state. Delegated from
+    // document so it survives pane re-renders.
+    document.addEventListener('click', e => {
+      if (e.target instanceof Element && e.target.closest(SAVE_BUTTON_SELECTOR)) {
+        writeJson(STATE_KEY, state);
+      }
+    });
+
+    // ---- URL classification and containing-list resolution ------------
 
     // A card's anchor reveals its granularity via query params: an `episode`
     // param marks an episode-specific card (Continue Watching, Calendar), a
@@ -1182,6 +1199,8 @@
       return () => OPEN;
     }
 
+    // ---- Fade rendering -----------------------------------------------
+
     // Episode cards never fade by show membership: lanes like Continue Watching
     // and Calendar surface unwatched episodes of started shows on purpose, so
     // dimming them would defeat those lanes. Season cards fade by the season's
@@ -1239,6 +1258,8 @@
       }
     }
 
+    // ---- Theme detection ----------------------------------------------
+
     // Theme detection: the app stamps data-theme on <html>, but the value
     // stays "system" when following the OS, so attribute matching cannot
     // resolve the effective theme. Measure the rendered body background
@@ -1262,17 +1283,6 @@
     new MutationObserver(syncThemeClass).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeClass);
     syncThemeClass();
-
-    // Fade toggles apply in-memory immediately but persist only when the user
-    // clicks the pane's save button ("Set filters as default", matched by
-    // aria-label since the surrounding bits-* ids are regenerated per render);
-    // a reload reverts unsaved toggles to the last saved state. Delegated from
-    // document so it survives pane re-renders.
-    document.addEventListener('click', e => {
-      if (e.target instanceof Element && e.target.closest(SAVE_BUTTON_SELECTOR)) {
-        writeJson(STATE_KEY, state);
-      }
-    });
 
     scanCallbacks.push(scan);
   })();

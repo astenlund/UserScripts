@@ -26,4 +26,29 @@ not to resolve dependencies.
 
 ## Entries
 
-Nothing yet.
+- **initFadeFilters has outgrown single-closure comprehension** (shipped
+  2026-08-02, commits c8f764f and ca881e5, Trakt Improved 1.25). The
+  backlog entry staged the work as banner-grouping first, then a
+  considered split of the URL-classification and sweep machinery into
+  sibling closures. Shipped shape: the membership cache, cross-tab
+  invalidation markers, API sweep fetchers, sweep scheduling, and the
+  whole `quickLists` population moved out of `initFadeFilters` into a
+  new top-level `initListMembership` closure (between shared plumbing
+  and the feature IIFEs), which populates `quickLists` for the toggles
+  feature and returns an explicit read surface (`sets`, `listedCounts`,
+  `listedKeys`, `quickTargetKey`, `needsRefresh`, `queueRefresh`)
+  consumed by the fade feature at exactly four seams (`listKeyKnown`,
+  `quickCatFor`, `applyFades`, `scan`). `CATEGORIES` and `QUICK_CATS`
+  graduated to shared plumbing next to `QUICK_LIST_NAMES` because both
+  closures need them. The dependency audit that justified the split:
+  it is one-directional (fade reads membership; membership never calls
+  back into fade), so the extraction needed a read surface only. The
+  URL-classification family (`cardTarget`, `pageContext`,
+  `listPathParts`, the containing-list resolvers) deliberately stayed
+  inside the fade closure under a section banner: it serves only the
+  fade scan, and a third top-level surface with a single consumer
+  would add wiring without a second consumer to justify it; the
+  pending "Lift a shared list-URL parser to the shared plumbing
+  section" quick win thins it from the shared-plumbing side instead.
+  Both closures carry `// ---- <section> ----` banners; the pane
+  save-button listener moved next to the filter-pane code it serves.

@@ -186,11 +186,13 @@ Alternatives considered and rejected:
   menu is gone before the write settles with or without the shield;
   the shield changes only scroll-driven dismissal. That bug's
   diagnosis and this feature can land in any order.
-- QUICK_WINS.md "initFadeFilters has outgrown single-closure
-  comprehension" and "Lift a shared list-URL parser to the shared
-  plumbing section": same file, different closures. This slice adds
-  one standalone IIFE and touches no existing closure, so neither
-  refactor blocks it or is blocked by it; any landing order works.
+- QUICK_WINS.md "Lift a shared list-URL parser to the shared
+  plumbing section" and the closure-split refactor "initFadeFilters
+  has outgrown single-closure comprehension" (shipped 2026-08-02,
+  archived in QUICK_WINS_HISTORY.md): same file, different closures.
+  This slice adds one standalone IIFE and touches no existing
+  closure, so neither refactor blocks it or is blocked by it; any
+  landing order works.
 - QUICK_WINS.md "Write-triggered membership refresh can read
   server-cache-stale list items" and BUGS.md "Cross-tab list adds
   miss the fade treatment until it eventually self-heals": membership

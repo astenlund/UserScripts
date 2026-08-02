@@ -378,10 +378,11 @@ v4-to-v5 rejection runs when 1.22 reaches installed copies.
   is fixed nor worsened; a stale corrector read can now also revert
   a quick-list fade, the same exposure the shipped listed fade
   already has.
-- QUICK_WINS.md "initFadeFilters has outgrown single-closure
-  comprehension" and "Lift a shared list-URL parser": this feature
-  grows the resolver the entries describe; their preferred shapes
-  remain valid afterward and neither blocks this work.
+- QUICK_WINS.md "Lift a shared list-URL parser" and the closure-split
+  refactor "initFadeFilters has outgrown single-closure comprehension"
+  (shipped 2026-08-02, archived in QUICK_WINS_HISTORY.md): this
+  feature grows the resolver the entries describe; their preferred
+  shapes remain valid afterward and neither blocks this work.
 
 ## Hardening
 

@@ -2862,6 +2862,12 @@
       // replaces the optimistic state with server truth on any page.
       notifyMutation();
       quickLists.bumpInvalidationMarker();
+      // Only body-judged success enters the ledger (the block around it
+      // runs on every settled outcome); after the bump, so the entry's
+      // marker snapshot includes this write's own bump.
+      if (ok) {
+        quickLists.noteConfirmedWrite(name, slugKey, add);
+      }
       quickLists.refreshMembership({ writeTriggered: true });
       if (!ok) {
         quickLists.applyListToggle(name, slugKey, !add);

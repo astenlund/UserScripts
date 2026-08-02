@@ -46,3 +46,13 @@ what already shipped, not to resolve dependencies.
   the current shape. Shipped 2026-08-01 in Trakt Improved 1.22
   (commits b183da5, 28c666a, 601b4f1, 8520fc8, e5d650e plus fixups);
   live-verified against app.trakt.tv the same day.
+- [Popup menu scroll shield](features/popup-menu-scroll-shield.md):
+  keeps card and list-page kebab popups open while the page scrolls
+  (two window capture-phase passive listeners swallow wheel and
+  scroll while a rendered menu ul is at least partially in the
+  viewport; once the menu is fully offscreen events pass through and
+  the app closes its own menu). E2e surfaced that the popup container
+  is a zero-height positioning anchor on list surfaces, so the rect
+  source is the inner ul. Shipped 2026-08-02 in Trakt Improved 1.24
+  (commit 32e8f5e plus fixup); live-verified against app.trakt.tv
+  the same day.

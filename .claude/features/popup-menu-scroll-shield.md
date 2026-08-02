@@ -1,5 +1,7 @@
 # Popup menu scroll shield
 
+Status: signed off 2026-08-02 13:00, content: 814882ae
+
 Keep the card popup menu (the kebab menu on media cards, and the same
 popup on list pages) open while the page scrolls, so a menu taller than
 the remaining viewport can be scrolled into full view instead of
@@ -54,7 +56,21 @@ events:
    return. This is the permanent fast path: no menu, no work beyond one
    selector probe, and the shield needs no state, no observer, and no
    teardown.
-2. If the container's `getBoundingClientRect()` is fully outside the
+2. If the container holds no rendered menu, return without swallowing.
+   Concretely: no inner `ul`, or a bounding rect with zero width or
+   height. Container presence alone is not proof of an open menu: the
+   repo's own notes record that the SPA can reuse one popup container
+   across opens (the quick-list and Truncate per-open-lifecycle
+   comments in trakt_improved.user.js), so a closed-but-retained
+   container is a real possibility. Without this guard, a hidden or
+   emptied container reports a zero rect, which none of step 3's
+   offscreen tests match, and the shield would swallow every wheel
+   and scroll event for the rest of the session, silently starving
+   hydration and infinite scroll with no menu on screen. The guard
+   mirrors the shape `renderPopup` already uses (it requires
+   `container.querySelector('ul')` before treating the popup as
+   rendered) and fails toward native app behavior.
+3. If the container's `getBoundingClientRect()` is fully outside the
    viewport (`bottom < 0`, `top > innerHeight`, `right < 0`, or
    `left > innerWidth`), return without swallowing. The event then
    reaches the app's own listeners, which close the menu through the
@@ -62,7 +78,7 @@ events:
    scrolled away: the app remains the sole authority on closing, and
    the shield only scopes when the app is allowed to hear scroll
    input.
-3. Otherwise `stopImmediatePropagation()`.
+4. Otherwise `stopImmediatePropagation()`.
 
 Why this shape holds:
 
@@ -85,32 +101,87 @@ Why this shape holds:
   (finer deltas), so no input-device-specific handling exists
   anywhere. Touchscreen `touchmove` is out of scope for a desktop
   userscript manager, and the app was not observed listening for it.
-- The offscreen check runs at most once per swallowed event while a
-  menu is open, and `scroll` events fire after the scroll position
-  updates, so the rect reflects the post-scroll layout. The residual
-  edge is benign: stopping exactly when the menu crosses fully
-  offscreen leaves it open, offscreen, until the next scroll tick or
-  click closes it.
+- The rendered-menu and offscreen checks run at most once per
+  swallowed event while a menu is open, and `scroll` events fire
+  after the scroll position updates, so the rect reflects the
+  post-scroll layout. The residual edge is benign: stopping exactly
+  when the menu crosses fully offscreen leaves it open, offscreen,
+  until the next scroll tick or click closes it.
+
+Alternatives considered and rejected:
+
+- **Reposition the menu to fit the viewport** (shift its absolute
+  `top` so nothing is clipped): solves only the opens-clipped case,
+  not the actual goal of scrolling freely while a menu is open;
+  detaches the menu from its owning card, which the app's absolute
+  document-coordinate placement keeps visually anchored; and writes
+  to app-owned inline styles on a node the app positions, a more
+  fragile contract than passively filtering events.
+- **Keep the app's max-height cap so tall menus scroll internally**:
+  the quick list toggles feature deliberately lifts that cap
+  (`growPopupMenu`) because injected rows would otherwise clip, so
+  this would revert shipped behavior; an inner scrollbar on a popup
+  menu is also the poorer reading experience, and it again addresses
+  only the clipped case.
+- **Neutralize the app's two closing listeners directly**: the boot
+  scroll listener predates userscript injection (`@run-at
+  document-idle`), so no listener reference exists to hand to
+  `removeEventListener`; capturing one would mean patching
+  `addEventListener` from document-start, which is invasive, fragile
+  across app updates, and affects unknown other consumers of those
+  events. The EventTracker wheel listeners re-register on every menu
+  open, compounding the same problem.
+- **Close and rebuild or reopen the menu ourselves**: already ruled
+  out in Diagnosis; these menus ignore synthetic clicks.
 
 ## Interactions
 
-- **Quick list toggles / Truncate rows**: both inject rows into the
-  same popup container and benefit directly; no code in either feature
-  changes. The shield has no DOM writes, so the shared body observer's
-  idempotence rule is not in play.
+- **Quick list toggles / Truncate rows**: both features' rows land in
+  the same popup container at runtime (quick list toggles query
+  `.trakt-popup-menu-container` directly; Truncate locates the menu
+  structurally from its Share row anchor), so both benefit directly;
+  no code in either feature changes. The shield has no DOM writes,
+  so the shared body observer's idempotence rule is not in play.
 - **Virtualized grid hydration and infinite scroll**: the app's own
-  scroll listeners are also starved while a menu is open, so card
-  hydration and page-append pause during that window and resume on the
-  first scroll after the menu closes. Accepted trade; the window is
-  short and self-healing.
+  scroll listeners are also starved while a popup menu is rendered
+  and at least partially in the viewport, so card hydration and
+  page-append pause during that window. The pause ends with the
+  shield's gate, not strictly at close: a pass-through event (menu
+  fully offscreen) reaches the hydration listeners and the app's
+  closing listener at the same time, and after a click-dismiss the
+  next scroll flows normally. Accepted trade; the window is short and
+  self-healing.
 - **Summary actions menu** (`div.trakt-summary-actions`, detail
   pages): inline element, not `.trakt-popup-menu-container`, does not
   close on scroll, unaffected.
 - **Filter pane, tooltips**: the `EventTracker` wheel listeners on
   `html` appear and disappear with other UI too (observed adds and
-  removes while no popup was open). The shield keys strictly on popup
-  container presence, so other consumers hear wheel events normally
-  whenever no popup menu is open.
+  removes while no popup was open). The shield keys on a rendered
+  popup menu (Design steps 1 and 2), so other consumers hear wheel
+  events normally whenever no popup menu is open.
+
+## Interactions with open backlog work
+
+- BUGS.md "Anticipated/Uninterested quick toggles rarely take effect,
+  and failures are silent": same card popup surface, but no
+  interaction in either direction. The card popup dismisses itself on
+  any trusted click, including the toggle click on an injected row
+  (per Diagnosis; the userscript's `closeMenus` targets only the
+  summary-actions underlay and cannot close this surface), so the
+  menu is gone before the write settles with or without the shield;
+  the shield changes only scroll-driven dismissal. That bug's
+  diagnosis and this feature can land in any order.
+- QUICK_WINS.md "initFadeFilters has outgrown single-closure
+  comprehension" and "Lift a shared list-URL parser to the shared
+  plumbing section": same file, different closures. This slice adds
+  one standalone IIFE and touches no existing closure, so neither
+  refactor blocks it or is blocked by it; any landing order works.
+- QUICK_WINS.md "Write-triggered membership refresh can read
+  server-cache-stale list items" and BUGS.md "Cross-tab list adds
+  miss the fade treatment until it eventually self-heals": membership
+  sweep machinery driven by timers and fetch hooks, with no scroll
+  path. The shield neither touches nor delays the sweeps, so neither
+  entry is affected in either direction; landing order is free.
 
 ## Testing
 
@@ -119,18 +190,30 @@ E2e via the established injected-build route (trimmed bundle in
 virtualized grids):
 
 - Open a card popup, scroll: menu stays open and tracks its card.
+  Keep observing for at least 10 seconds after the scroll: the app's
+  wheel-path close fires on a deferred schedule (Diagnosis), so a
+  shield that swallows only `scroll` passes an instantaneous check
+  and fails a few seconds later. The validating live run soaked for
+  7 seconds; 10 gives margin.
 - Keep scrolling until the menu is fully offscreen: next scroll closes
   it (app-driven).
 - With menu open, click elsewhere: closes as before.
-- With no menu open, scrolling hydrates cards and appends pages as
-  before (shield inert).
+- Open a menu, dismiss it with a click, then scroll: hydration and
+  page-append behave normally, proving no lingering swallow from a
+  retained container (Design step 2's guard).
+- With no menu open on a fresh page, scrolling hydrates cards and
+  appends pages as before (shield inert).
 - List page kebab popup gets the same treatment.
 
 This feature has no localStorage keys, CSS classes, or style ids, so
-the e2e namespacing protocol (key suffixes, renamed classes) has
-nothing to rename; installed copy and injected build coexist as
-described in Design.
+the e2e namespacing protocol (key suffixes, renamed classes and style
+ids, version-stamped cache keys) has nothing to rename; installed
+copy and injected build coexist as described in Design.
 
 ## Shipping
 
 Single slice. Bump `@version` (minor) in the same change.
+
+## Hardening
+
+- revise-spec graduated 2026-08-02 13:38 at 9eb2d02, scope: whole file, content: 4f8612bb

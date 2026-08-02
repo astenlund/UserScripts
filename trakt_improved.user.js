@@ -558,6 +558,26 @@
     let pendingForcedRefresh = false;
     let sweepStartedAt = 0;
 
+    // Confirmed-write ledger: the script's own body-judged-successful
+    // quick-toggle writes, defended against server-cache-stale corrector
+    // reads until the trust window closes. Tab-local and non-persisted on
+    // purpose: cross-tab staleness is another tab's problem to heal, and
+    // a reload inside the window is left to self-healing. Entries leave
+    // by agreement, expiry, or a foreign-write drop; past the window
+    // server truth wins unconditionally.
+    const WRITE_TRUST_WINDOW_MS = 30 * 1000;
+    const SUSPECT_RETRY_BASE_MS = 5 * 1000;
+    const confirmedWrites = new Map();
+    let nextRetryDelay = SUSPECT_RETRY_BASE_MS;
+    let retryTimer = 0;
+
+    function cancelRetryTimer() {
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = 0;
+      }
+    }
+
     // A mutation-triggered refresh bypasses the failure backoff (see
     // refresh()): user actions are rare and deserve promptness. The shared
     // hook queues the scan that notices the flag; the marker mechanism stays
@@ -717,6 +737,26 @@
         committedMarkers[SELF_MARKER_KEY] = value;
         writeJson(MARKER_SNAPSHOT_KEY, committedMarkers);
       }
+    };
+
+    // Ledger writer for the toggles feature: called only on body-judged
+    // success, AFTER bumpInvalidationMarker (the captured snapshot must
+    // include this write's own bump, or the entry would read itself as
+    // foreign). Latest write to the same item wins. A new write resets
+    // the retry ladder but leaves a pending retry timer alone: the
+    // write's own write-triggered sweep already covers promptness.
+    quickLists.noteConfirmedWrite = (name, slugKey, add) => {
+      confirmedWrites.set(`${name}:${slugKey}`, { name, slugKey, add, confirmedAt: Date.now(), markers: currentMarkers() });
+      nextRetryDelay = SUSPECT_RETRY_BASE_MS;
+    };
+
+    // Foreign-write surrender: neither drop signal says what changed, so
+    // the whole ledger yields. Deliberately coarse: it may abandon
+    // protection for an unrelated pending write, trading a rare transient
+    // revert for never knowingly fighting another writer.
+    quickLists.dropConfirmedWrites = () => {
+      confirmedWrites.clear();
+      cancelRetryTimer();
     };
 
     // Write-triggered flavor: waits a longer settle window than

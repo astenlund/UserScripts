@@ -39,6 +39,13 @@ and driving trusted input through browser tooling:
 - Swallowing both event types at the window capture stage while a menu
   is open kept the menu open across scrolls and through a 7 second
   soak, with normal click-to-dismiss behavior intact.
+- Post-implementation e2e (2026-08-02, injected build) added: the
+  popup container's own height animates from 0 on the card surface
+  and stays 0 permanently on the list-page kebab surface (the inner
+  `ul` overflows it visibly), so the menu `ul` is the only reliable
+  geometry source; and the container is removed from the DOM a
+  moment after close (it lingers only through the close animation),
+  so retained-container states are transient in practice.
 - Escape does not close these menus; trusted clicks and scroll are the
   app's only dismissal paths. Synthetic (untrusted) clicks are ignored
   by these menus (consistent with the e2e notes in CLAUDE.md), which
@@ -57,20 +64,28 @@ events:
    selector probe, and the shield needs no state, no observer, and no
    teardown.
 2. If the container holds no rendered menu, return without swallowing.
-   Concretely: no inner `ul`, or a bounding rect with zero width or
-   height. Container presence alone is not proof of an open menu: the
-   repo's own notes record that the SPA can reuse one popup container
-   across opens (the quick-list and Truncate per-open-lifecycle
-   comments in trakt_improved.user.js), so a closed-but-retained
-   container is a real possibility. Without this guard, a hidden or
-   emptied container reports a zero rect, which none of step 3's
-   offscreen tests match, and the shield would swallow every wheel
-   and scroll event for the rest of the session, silently starving
-   hydration and infinite scroll with no menu on screen. The guard
-   mirrors the shape `renderPopup` already uses (it requires
+   Concretely: no inner `ul`, or a `ul` bounding rect with zero width
+   or height. The rect MUST come from the inner `ul`, not the
+   container: live e2e (2026-08-02) showed the container is a
+   zero-height positioning anchor on some surfaces (permanently so on
+   list-page kebab popups; transiently during the card popup's open
+   animation), so the container's own rect cannot distinguish open
+   from closed, while the `ul` carries the menu's real geometry on
+   every observed surface. Container presence alone is not proof of
+   an open menu either: the repo's own notes record that the SPA can
+   reuse one popup container across opens (the quick-list and
+   Truncate per-open-lifecycle comments in trakt_improved.user.js),
+   and e2e observed the container lingering through the close
+   animation before being removed from the DOM. Without this guard, a
+   hidden or emptied container state reports a zero rect, which none
+   of step 3's offscreen tests match, and the shield would swallow
+   every wheel and scroll event for the rest of the session, silently
+   starving hydration and infinite scroll with no menu on screen. The
+   guard mirrors the shape `renderPopup` already uses (it requires
    `container.querySelector('ul')` before treating the popup as
-   rendered) and fails toward native app behavior.
-3. If the container's `getBoundingClientRect()` is fully outside the
+   rendered) and fails toward native app behavior, including during
+   the open animation's brief zero-height window.
+3. If the menu `ul`'s `getBoundingClientRect()` is fully outside the
    viewport (`bottom < 0`, `top > innerHeight`, `right < 0`, or
    `left > innerWidth`), return without swallowing. The event then
    reaches the app's own listeners, which close the menu through the

@@ -206,6 +206,12 @@
         result.then(response => {
           if (response.ok) {
             notifyMutation();
+            // A successful native write is the one same-tab signal the
+            // membership engine's confirmed-write ledger must yield to;
+            // script writes ride the sandbox fetch and never pass here.
+            // The response arrives in real time, so it is always later
+            // than any ledgered write.
+            quickLists.dropConfirmedWrites();
           }
         }, () => {
           // The app's own error handling owns failed mutations.
@@ -727,6 +733,15 @@
     quickLists.bumpInvalidationMarker = () => {
       const value = String(Date.now());
       try {
+        // Both tabs write this key, and overwriting it is the one act
+        // that can erase the evidence of a foreign bump before the
+        // ledger's per-entry snapshot comparison sees it. Read first and
+        // surrender the ledger when the live value is not this tab's
+        // own; the only residual blind spot is a foreign bump landing
+        // inside this read-then-write instant.
+        if (localStorage.getItem(SELF_MARKER_KEY) !== selfMarkerValue) {
+          quickLists.dropConfirmedWrites();
+        }
         localStorage.setItem(SELF_MARKER_KEY, value);
       } catch {
         // Bump is best-effort; other tabs heal on TTL without it.

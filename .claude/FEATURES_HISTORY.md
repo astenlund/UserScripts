@@ -54,5 +54,5 @@ what already shipped, not to resolve dependencies.
   the app closes its own menu). E2e surfaced that the popup container
   is a zero-height positioning anchor on list surfaces, so the rect
   source is the inner ul. Shipped 2026-08-02 in Trakt Improved 1.24
-  (commit 32e8f5e plus fixup); live-verified against app.trakt.tv
+  (commit 049853b); live-verified against app.trakt.tv
   the same day.

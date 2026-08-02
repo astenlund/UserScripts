@@ -232,4 +232,4 @@ Single slice. Bump `@version` (minor) in the same change.
 ## Hardening
 
 - revise-spec graduated 2026-08-02 13:38 at 9eb2d02, scope: whole file, content: 4f8612bb
-- handover completed 2026-08-02 16:34 at 8512e95, scope: whole file, content: afc93864
+- handover completed 2026-08-02 16:34 at 80d6b7d, scope: whole file, content: afc93864

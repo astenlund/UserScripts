@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.23
+// @version      1.24
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -2999,6 +2999,43 @@
     }, 5000);
 
     scanCallbacks.push(scan);
+  })();
+
+  // ---------------------------------------------------------------------
+  // Feature: popup menu scroll shield
+  // Keeps the card/list kebab popup open while the page scrolls: while a
+  // popup menu is rendered and at least partially in the viewport, wheel
+  // and scroll events are swallowed at window capture before the app's
+  // closing listeners hear them (native scrolling is a default action and
+  // proceeds untouched). Once the menu is fully offscreen, events pass
+  // through and the app closes its own menu.
+  // ---------------------------------------------------------------------
+
+  (function initPopupScrollShield() {
+    // Rendered-menu guard: the SPA can reuse one popup container across
+    // opens, so container presence alone is not proof of an open menu,
+    // and the container is a zero-height positioning anchor on some
+    // surfaces (observed live on list-page kebab popups), so its own
+    // rect cannot distinguish open from closed either. The inner ul
+    // carries the menu's real geometry everywhere: no ul, or a
+    // collapsed ul rect, means no rendered menu, and arming anyway
+    // would swallow every event for the session (a zero rect at 0,0
+    // matches none of the offscreen tests).
+    function shield(e) {
+      const container = document.querySelector('.trakt-popup-menu-container');
+      if (!container) return;
+      const menu = container.querySelector('ul');
+      if (!menu) return;
+      const rect = menu.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      // Fully offscreen: pass through so the app's own listeners close
+      // the menu; the app stays the sole closing authority.
+      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return;
+      e.stopImmediatePropagation();
+    }
+
+    window.addEventListener('wheel', shield, { capture: true, passive: true });
+    window.addEventListener('scroll', shield, { capture: true, passive: true });
   })();
 
   // Initial pass + re-run as the SPA renders; class toggles and inline style

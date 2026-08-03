@@ -257,13 +257,20 @@ state):
   and the settle window are unowned latencies; the baseline being
   beaten is the 15-minute TTL) without any DOM interaction in Y,
   and Y's fade state converges. This also probes whether storage
-  events reach the Tampermonkey sandbox listener at all.
-  (live-claim: provisional)
+  events reach the listener at all. (live-claim: probed 2026-08-04:
+  a page-context build registered on pageWindow, the released
+  registration surface, swept exactly once within ~6s of a foreign
+  prefix-key bump with zero DOM interaction in Y; attaching to
+  pageWindow from the sandbox has production precedent in the fetch
+  hook)
 - Two-tab, native flavor: perform a native list action in tab X
   (e.g. a Manage-lists tick, expected to bump the app's `listed:*`
   markers); tab Y converges the same way. A separate probe because
   the app-bumped key names are themselves a claim the repo cannot
-  settle. (live-claim: provisional)
+  settle. (live-claim: probed 2026-08-04: the exact app key
+  `trakt-marker:invalidate:listed:show`, whose app-written
+  timestamps were observed live 2026-08-03, was bumped from tab X
+  and drove tab Y's sweep end-to-end)
 - Regression: one sweep per trigger (no sweep loops); the five
   un-busted `apiGet` call sites still work; normal toggle round-trip
   unchanged.
@@ -291,3 +298,4 @@ win).
 
 - revise-spec graduated 2026-08-04 00:15 at 29d3465, scope: whole file, content: d52b3cb8
 - revise-spec refreshed 2026-08-04 00:55 at e16c220, scope: whole file, content: 2e498852 (final-review fold-back)
+- revise-spec refreshed 2026-08-04 01:22 at e1c9418, scope: whole file, content: ed12d8b3 (live-claim fold-back)

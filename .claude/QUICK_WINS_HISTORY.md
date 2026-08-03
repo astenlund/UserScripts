@@ -92,3 +92,28 @@ not to resolve dependencies.
   6-iteration revise-spec loop whose reviewers caught, pre-code, the
   helper guard-order defect, the marker-drop ordering hole, and the
   null-target prune crash.
+- **Lift a shared list-URL parser to the shared plumbing section**
+  (shipped 2026-08-03, commit 9fd4c4b, Trakt Improved 1.28). One
+  `listPathParts(pathname)` now lives next to `mediaType` in the shared
+  plumbing section, the file's second explicit cross-feature surface
+  after `quickLists`. The fade feature's segment-based local copy (and
+  its now-orphaned `pathSegments` helper) is deleted with its three
+  call sites migrated; the list-counts feature's `parseListPath` became
+  a thin wrapper adding `kind` and the `canonicalKey` cache key.
+  Deliberate behavior delta on the counts side: the shared parser
+  carries the fade side's stricter guard rejecting slug `view` (the
+  lists-overview tab route), so `/users/me/lists/view` no longer parses
+  as a list named "view" that the counts feature would resolve against
+  the API and cache as gone. `listKeyKnown` / `canonicalKey` key
+  building stayed per-feature: the two features canonicalize
+  differently (lowercasing vs. me-resolution via `cache.me`), so only
+  the URL shape test was shared. Originally flagged by Code Reuse
+  reviewers in the fade-on-list-pages code review (2026-07-30).
+  Post-ship review (fixup to 9fd4c4b) found a third copy the entry's
+  two-feature framing had hidden: the truncate feature's
+  `isTargetListPath` re-implemented the same shape test and was
+  migrated onto the shared parser too; behavior-neutral there because
+  `TRUNCATE_SLUG` is UUID-suffixed and can never be the rejected
+  'view' slug. Textbook instance of the extraction-audit rule:
+  sibling duplication co-located with the named trigger stays
+  invisible unless audited for explicitly.

@@ -20,10 +20,6 @@ keys -- never on line numbers, plan-phase ordinals, bullet positions,
 or temporal qualifiers ("new", "recent"): a precise locator that rots
 misleads harder than a coarse one that holds.
 
-## trakt_improved.user.js
-
-- **Lift a shared list-URL parser to the shared plumbing section.** trakt_improved.user.js parses `/users/<owner>/lists/<slug>` URLs in two feature IIFEs: the fade feature's `listPathParts` (plus `listKeyKnown`'s owner/slug key building) and the list-counts feature's `parseListPath`/`canonicalKey`. Lift one helper next to `mediaType` in the shared plumbing section and migrate both call sites; this becomes the file's second explicit cross-feature surface after `quickLists`, which is the sanctioned pattern for shared machinery. Flagged by Code Reuse reviewers in the fade-on-list-pages code review (2026-07-30) and deferred to keep the shipping diff minimal. The quick-list fade toggles work (Trakt Improved 1.22) consolidated the fade side into named helpers (`listPartsIn` anchor scanning, `listIdentityKey` owner/slug identity) without crossing IIFEs, so the lift now has richer, already-named pieces to move.
-
 ## History
 
 Implemented quick wins are archived in

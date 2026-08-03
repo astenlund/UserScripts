@@ -261,10 +261,13 @@
   // ---------------------------------------------------------------------
   // List-membership engine
   // Owns the membership cache (watched/started/watchlisted/listed data
-  // swept from the API), the single-flight refresh that maintains it, and
-  // the cross-tab invalidation markers. Serves two consumers: it populates
-  // the quickLists surface for the toggles feature and returns the read
-  // surface the fade feature renders from.
+  // swept from the API), the single-flight refresh that maintains it
+  // (sweep reads cache-busted via a marker nonce, latched back to
+  // marker-less if the server ever rejects the param), and the cross-tab
+  // invalidation markers, including the storage-event trigger that
+  // sweeps promptly on another tab's bump. Serves two consumers: it
+  // populates the quickLists surface for the toggles feature and returns
+  // the read surface the fade feature renders from.
   // ---------------------------------------------------------------------
 
   const membership = (function initListMembership() {
@@ -640,6 +643,42 @@
     // as backup and for actions performed in other tabs.
     mutationCallbacks.push(() => {
       forceRefresh = true;
+    });
+
+    // Cross-tab prompt trigger: another tab's marker bump (script
+    // quick-toggle via SELF_MARKER_KEY, or the app's own
+    // trakt-marker:invalidate:* bumps on native actions; the exact
+    // app key names are unverified, observed live e.g. listed:show)
+    // sweeps this tab without waiting for a DOM-mutation scan, which
+    // an idle tab may never run. Storage events fire only in tabs
+    // that did not perform the write, so every matching event is
+    // foreign by construction (a null key, as from localStorage
+    // .clear(), fails the prefix test). The single debounced timer
+    // waits WRITE_SETTLE_MS before sweeping: the writer bumps the
+    // instant its POST resolves, and a zero-delay read could commit
+    // pre-write server state as fresh with no ledger entry here to
+    // correct it. The in-flight branch mirrors scheduleSuspectResweep;
+    // the scan-driven markersChanged() check stays as catch-up for
+    // bumps that landed while no listener was alive.
+    // Registered on pageWindow (the real page window, the same
+    // surface the fetch hook patches): storage events dispatch on
+    // the page window, sandbox-wrapper forwarding is
+    // manager-dependent, and attaching there makes the page-context
+    // e2e build's listener path identical to the released sandboxed
+    // build.
+    let foreignBumpTimer = 0;
+    pageWindow.addEventListener('storage', e => {
+      if (!e.key || !e.key.startsWith(MARKER_PREFIX)) return;
+      clearTimeout(foreignBumpTimer);
+      foreignBumpTimer = setTimeout(() => {
+        foreignBumpTimer = 0;
+        if (refreshInFlight) {
+          pendingForcedRefresh = true;
+        } else {
+          forceRefresh = true;
+          queueRefresh();
+        }
+      }, WRITE_SETTLE_MS);
     });
 
     // The snapshot was captured at sweep start (so an app action landing

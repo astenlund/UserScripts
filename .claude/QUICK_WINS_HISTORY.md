@@ -53,8 +53,8 @@ not to resolve dependencies.
   Both closures carry `// ---- <section> ----` banners; the pane
   save-button listener moved next to the filter-pane code it serves.
 - **Write-triggered membership refresh can read server-cache-stale list
-  items** (shipped 2026-08-03, commits 86274d8..fd9a43b plus review
-  fixups 917b73c and a1133ed, Trakt Improved 1.26). Observed live
+  items** (shipped 2026-08-03, commits 86274d8..e111375 with review
+  fixes autosquashed in, Trakt Improved 1.26). Observed live
   2026-07-28: the corrector sweep fetched `/users/me/lists/{id}/items`
   about 2s after a confirmed add and got pre-write state, reverting the
   optimistic toggle icon (and, since 1.21/1.22, the quick-category

@@ -93,7 +93,8 @@ not to resolve dependencies.
   helper guard-order defect, the marker-drop ordering hole, and the
   null-target prune crash.
 - **Lift a shared list-URL parser to the shared plumbing section**
-  (shipped 2026-08-03, commit 9fd4c4b, Trakt Improved 1.28). One
+  (shipped 2026-08-03, commit 0c6b458 with the post-ship review fix
+  autosquashed in, Trakt Improved 1.28). One
   `listPathParts(pathname)` now lives next to `mediaType` in the shared
   plumbing section, the file's second explicit cross-feature surface
   after `quickLists`. The fade feature's segment-based local copy (and
@@ -109,8 +110,8 @@ not to resolve dependencies.
   differently (lowercasing vs. me-resolution via `cache.me`), so only
   the URL shape test was shared. Originally flagged by Code Reuse
   reviewers in the fade-on-list-pages code review (2026-07-30).
-  Post-ship review (fixup to 9fd4c4b) found a third copy the entry's
-  two-feature framing had hidden: the truncate feature's
+  Post-ship review (autosquashed into 0c6b458) found a third copy the
+  entry's two-feature framing had hidden: the truncate feature's
   `isTargetListPath` re-implemented the same shape test and was
   migrated onto the shared parser too; behavior-neutral there because
   `TRUNCATE_SLUG` is UUID-suffixed and can never be the rejected

@@ -380,11 +380,54 @@
 
     // ---- API sweep fetchers -------------------------------------------
 
-    async function fetchPage(auth, path, page) {
+    // Cache-busting nonce for sweep GETs, mirroring the app's own
+    // marker= mechanism against the same server-side cache (the app
+    // mints a per-page-load token; per-sweep uniqueness is all the
+    // busting needs). bustingDisabled is the per-tab latch for the
+    // server ever rejecting the param: 400/422 on a busted GET flips
+    // it and every later sweep this session runs marker-less,
+    // degrading to pre-1.29 behavior instead of a permanent sweep
+    // outage. In-memory on purpose: a server-side fix heals on the
+    // next page load. 401/403/404/429/5xx/network failures are NOT
+    // param rejections and keep their existing stale-keep + backoff
+    // routing untouched.
+    let bustingDisabled = false;
+
+    function mintNonce() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+
+    function noteBustingRejected(e) {
+      const message = String(e && e.message);
+      if (!bustingDisabled && (message.startsWith('HTTP 400 ') || message.startsWith('HTTP 422 '))) {
+        bustingDisabled = true;
+        warn('Server rejected the sweep cache-busting param; running marker-less until next page load', e);
+      }
+    }
+
+    // Shared busted-GET wrapper for the two nonce-carrying fetchers:
+    // applies the nonce and routes a param-rejection-shaped failure
+    // through the latch before re-raising the original error. The
+    // response comes back unconsumed.
+    async function bustedGet(auth, url, nonce) {
+      if (nonce) {
+        url.searchParams.set('marker', nonce);
+      }
+      try {
+        return await apiGet(auth, url);
+      } catch (e) {
+        if (nonce) {
+          noteBustingRejected(e);
+        }
+        throw e;
+      }
+    }
+
+    async function fetchPage(auth, path, page, nonce) {
       const url = apiUrl(path);
       url.searchParams.set('page', page);
       url.searchParams.set('limit', PAGE_LIMIT);
-      const response = await apiGet(auth, url);
+      const response = await bustedGet(auth, url, nonce);
       const body = await response.json();
       if (!Array.isArray(body)) throw new Error(`Unexpected response shape for ${path}`);
       const pageCount = parseInt(response.headers.get('X-Pagination-Page-Count'), 10);
@@ -398,9 +441,14 @@
     // header is authoritative; the short-page check is only a fallback for a
     // missing header, and an empty batch is a hard stop either way.
     async function fetchAll(auth, path) {
+      // One nonce per collection: a single mint site per call, not a
+      // cross-page consistency mechanism (each page URL is its own
+      // cache key either way; torn reads across pages match today's
+      // marker-less behavior and the next sweep owns healing them).
+      const nonce = bustingDisabled ? null : mintNonce();
       const items = [];
       for (let page = 1; ; page++) {
-        const { batch, pageCount } = await fetchPage(auth, path, page);
+        const { batch, pageCount } = await fetchPage(auth, path, page, nonce);
         items.push(...batch);
         if (batch.length === 0) return items;
         if (pageCount !== null ? page >= pageCount : batch.length < PAGE_LIMIT) return items;
@@ -417,7 +465,8 @@
       url.searchParams.set('extended', 'min');
       url.searchParams.set('season_numbers', 'true');
       url.searchParams.set('specials', 'true');
-      const response = await apiGet(auth, url);
+      const nonce = bustingDisabled ? null : mintNonce();
+      const response = await bustedGet(auth, url, nonce);
       const body = await response.json();
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         throw new Error('Unexpected response shape for season_numbers');

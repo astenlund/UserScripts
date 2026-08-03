@@ -66,39 +66,6 @@ numbers or adding a score source.
 
 **Requires:** none.
 
-### Cross-tab list adds miss the fade treatment until it eventually self-heals
-
-Adding a show/movie to a list does not always apply the list-based fade,
-especially when the add is made in another tab. Refreshing the page does
-not fix it; it sorts itself out eventually (presumably when a cached
-membership snapshot expires and refetches). Undiagnosed stub: fade-cache
-invalidation likely only reacts to writes seen by the local tab's fetch
-hook, so out-of-tab writes wait out the cache lifetime. The same-tab
-side of this server-cache staleness was fixed by the QUICK_WINS.md
-entry "Write-triggered membership refresh can read server-cache-stale
-list items" (shipped 2026-08-03 in Trakt Improved 1.26, archived in
-QUICK_WINS_HISTORY.md): confirmed same-tab quick-toggle writes are now
-defended by a 30s confirmed-write ledger. The ledger deliberately
-yields to foreign-write signals (another tab's marker movement), so
-the cross-tab window this bug describes is unchanged by it. Since fade-on-list-pages
-shipped (Trakt Improved 1.21), fades render on list surfaces too, so
-the missing-fade window is visible there as well; see the Interactions
-section in `features/fade-on-list-pages.md`. Quick-list fades (Trakt
-Improved 1.22) ride the same membership sweep, so the window applies
-to them equally. Diagnostic input from the quick-toggle bug's live
-session (2026-08-03, archived in BUGS_HISTORY.md): Trakt server reads
-reflected writes within ~1.3-3s in both plain and `marker=`-busted
-variants that day, weakening the "server cache expiry" hypothesis in
-this entry's stub; the likelier mechanism is sweep-trigger timing in
-the non-writing tab (a tab whose DOM is not mutating queues no scans,
-so `markersChanged()` goes unconsulted until an interaction mutates
-the DOM), and the diagnosis should start there. The fix is designed:
-the fresh-membership-sweeps feature's storage-event trigger closes
-the same-device window (cross-device staleness is a recorded
-anti-goal there); this entry archives when that feature ships.
-
-**Requires:** [fresh-membership-sweeps](features/fresh-membership-sweeps.md).
-
 ## History
 
 Fixed bugs are archived in [`BUGS_HISTORY.md`](BUGS_HISTORY.md), loaded

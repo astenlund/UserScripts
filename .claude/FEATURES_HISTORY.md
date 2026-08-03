@@ -56,3 +56,15 @@ what already shipped, not to resolve dependencies.
   source is the inner ul. Shipped 2026-08-02 in Trakt Improved 1.24
   (commit 049853b); live-verified against app.trakt.tv
   the same day.
+- [Fresh membership sweeps](features/fresh-membership-sweeps.md):
+  membership sweep GETs now carry a per-collection cache-busting
+  marker nonce (shared bustedGet wrapper, per-tab 400/422
+  busting-disabled latch), and a pageWindow storage listener sweeps
+  promptly on another tab's trakt-marker:invalidate:* bump (2s settle
+  debounce into the shared triggerForcedSweep helper). Fixes the
+  same-tab 30s fade revert and the cross-tab fade staleness for
+  same-origin tabs of one profile. Shipped 2026-08-04 in Trakt
+  Improved 1.29 (commits 13ea2f9, 899db77, 810d98f, 768ef3e plus
+  fixups pending autosquash); e2e-verified live with a namespaced
+  page-context build (all sweep URLs busted; a foreign marker bump
+  drove exactly one sweep in an idle tab within ~6s).

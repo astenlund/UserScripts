@@ -173,23 +173,6 @@ is struck through. As each slice ships, append its entry to
 new next-to-ship slice's gates, and walk every other `**Requires:**`
 line in `FEATURES.md` / `BUGS.md` to drop now-satisfied references.
 
-## Membership engine
-
-### [Fresh membership sweeps](features/fresh-membership-sweeps.md)
-
-Marker-busted sweep reads plus storage-event sweep triggers for the
-list-membership engine in trakt_improved.user.js. Kills the same-tab
-30-second fade revert after quick-toggle writes (sweeps stop reading
-Trakt's intermittently-stale server cache by riding the app's own
-`marker=` busting mechanism) and closes the same-device half of the
-cross-tab fade staleness bug (idle tabs sweep on another tab's marker
-bump instead of waiting for a DOM-mutation scan or the 15-minute TTL).
-Manage-lists row takeover and cross-device staleness are recorded
-anti-goals. Fixes the open cross-tab bug in BUGS.md, which archives
-together with this feature.
-
-**Requires:** none.
-
 ## Exploring
 
 Pre-dependency-analysis brainstorms live here. An entry is a draft

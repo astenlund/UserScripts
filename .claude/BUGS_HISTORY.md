@@ -61,9 +61,30 @@ self-converges (~30s observed; a reload converges immediately),
 which reads as a failed toggle. Historically the same
 perception was compounded by server-cache-stale sweep reads reverting
 the optimistic state, closed same-tab by the 1.26 confirmed-write
-ledger; the residual cross-tab fade lag is the still-open "Cross-tab
-list adds miss the fade treatment" entry, which this session's
-findings updated. The Manage-lists staleness itself is app-structural
+ledger; the residual cross-tab fade lag was the then-open "Cross-tab
+list adds miss the fade treatment" entry, fixed the next day by
+fresh-membership-sweeps (see its archive entry below). The Manage-lists staleness itself is app-structural
 (no invalidation channel a script can drive); the script's own
 surfaces (entry icons, fades, failure toasts) remain the truthful
 verification points.
+
+### Cross-tab list adds miss the fade treatment until it eventually self-heals
+
+Fixed 2026-08-04 by the fresh-membership-sweeps feature (Trakt
+Improved 1.29, commits 13ea2f9, 899db77, 810d98f, 768ef3e plus fixups
+pending autosquash; design record in
+features/fresh-membership-sweeps.md). Diagnosed mechanism: the
+non-writing tab noticed foreign marker movement only through
+DOM-mutation-driven scans, so an idle tab waited out the 15-minute
+cache TTL; server reads themselves were measured fresh within ~1.3-3s
+that week, refuting the original server-cache-expiry hypothesis
+(though intermittent stale windows beyond 35s also occur and are now
+fenced by the same feature's marker-nonce busting). Fix shape: a
+pageWindow storage listener filtered on the
+trakt-marker:invalidate: prefix debounces foreign bumps through a 2s
+settle timer into the shared forced-sweep trigger, so idle same-origin
+tabs of one profile converge within seconds. Cross-device and
+out-of-partition staleness stay TTL-driven, recorded as an explicit
+anti-goal in the feature spec. E2e-verified live: a foreign bump of
+the app's own listed:show marker drove exactly one sweep in an idle
+tab within ~6s with zero DOM interaction.

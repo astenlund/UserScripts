@@ -205,7 +205,8 @@ Alternatives considered and rejected:
   server-cache-stale list items" (shipped 2026-08-03 in Trakt
   Improved 1.26, archived in QUICK_WINS_HISTORY.md) and BUGS.md
   "Cross-tab list adds miss the fade treatment until it eventually
-  self-heals" (still open): membership sweep machinery driven by
+  self-heals" (since fixed by fresh-membership-sweeps, Trakt Improved
+  1.29, archived in BUGS_HISTORY.md): membership sweep machinery driven by
   timers and fetch hooks, with no scroll path. The shield neither
   touches nor delays the sweeps, so neither was affected in either
   direction.

@@ -645,6 +645,22 @@
       forceRefresh = true;
     });
 
+    // Forced-sweep trigger respecting the single-flight guard: a
+    // sweep already in flight cannot be trusted to have seen the
+    // demand, so the follow-up is queued instead and drained when
+    // that sweep commits (the tail of refresh()). Shared by the
+    // storage listener below and the suspect resweep; the
+    // write-settle trigger keeps its own guarded variant, which
+    // additionally checks sweep coverage via sweepStartedAt.
+    function triggerForcedSweep() {
+      if (refreshInFlight) {
+        pendingForcedRefresh = true;
+      } else {
+        forceRefresh = true;
+        queueRefresh();
+      }
+    }
+
     // Cross-tab prompt trigger: another tab's marker bump (script
     // quick-toggle via SELF_MARKER_KEY, or the app's own
     // trakt-marker:invalidate:* bumps on native actions; the exact
@@ -657,9 +673,10 @@
     // waits WRITE_SETTLE_MS before sweeping: the writer bumps the
     // instant its POST resolves, and a zero-delay read could commit
     // pre-write server state as fresh with no ledger entry here to
-    // correct it. The in-flight branch mirrors scheduleSuspectResweep;
-    // the scan-driven markersChanged() check stays as catch-up for
-    // bumps that landed while no listener was alive.
+    // correct it. The settle timer hands off to triggerForcedSweep
+    // (shared with the suspect resweep); the scan-driven
+    // markersChanged() check stays as catch-up for bumps that landed
+    // while no listener was alive.
     // Registered on pageWindow (the real page window, the same
     // surface the fetch hook patches): storage events dispatch on
     // the page window, sandbox-wrapper forwarding is
@@ -672,12 +689,7 @@
       clearTimeout(foreignBumpTimer);
       foreignBumpTimer = setTimeout(() => {
         foreignBumpTimer = 0;
-        if (refreshInFlight) {
-          pendingForcedRefresh = true;
-        } else {
-          forceRefresh = true;
-          queueRefresh();
-        }
+        triggerForcedSweep();
       }, WRITE_SETTLE_MS);
     });
 
@@ -782,12 +794,7 @@
       if (retryTimer) return;
       retryTimer = setTimeout(() => {
         retryTimer = 0;
-        if (refreshInFlight) {
-          pendingForcedRefresh = true;
-        } else {
-          forceRefresh = true;
-          queueRefresh();
-        }
+        triggerForcedSweep();
       }, nextRetryDelay);
       nextRetryDelay *= 2;
     }

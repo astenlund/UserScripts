@@ -66,30 +66,6 @@ numbers or adding a score source.
 
 **Requires:** none.
 
-### Anticipated/Uninterested quick toggles rarely take effect, and failures are silent
-
-The quick list toggles for the Anticipated and Uninterested lists (card
-popup menu and summary actions menu in trakt_improved.user.js) rarely
-work, and no error toast appears when a toggle fails, so the failure is
-invisible until the list is inspected. Undiagnosed stub: unclear whether
-the write request fails, is never sent, or succeeds while the UI reports
-nothing; the failure-toast path evidently does not fire either way.
-Since quick-list-fade-toggles shipped (Trakt Improved 1.22),
-`applyListToggle` no longer patches counts (it patches the target's
-`slugs` and `fadeSlugs` and rebuilds the derived sets), so the write-path
-diagnosis reasons about a simpler optimistic surface; see the
-Interactions section in `features/quick-list-fade-toggles.md`. Since
-the stale-membership corrector shipped (Trakt Improved 1.26), the
-`if (ok)` ledger gate in `performToggle` keys on exactly the
-body-judged success signal this bug distrusts: a wrongly-false `ok`
-leaves the corrector's protection inert for that write, and a
-wrongly-true one records a phantom confirmed write that reconciliation
-defends for up to its 30s trust window. A fix that changes how `ok` is
-judged is inherited by the gate automatically, since it reads the same
-variable.
-
-**Requires:** none.
-
 ### Cross-tab list adds miss the fade treatment until it eventually self-heals
 
 Adding a show/movie to a list does not always apply the list-based fade,
@@ -109,7 +85,14 @@ shipped (Trakt Improved 1.21), fades render on list surfaces too, so
 the missing-fade window is visible there as well; see the Interactions
 section in `features/fade-on-list-pages.md`. Quick-list fades (Trakt
 Improved 1.22) ride the same membership sweep, so the window applies
-to them equally.
+to them equally. Diagnostic input from the quick-toggle bug's live
+session (2026-08-03, archived in BUGS_HISTORY.md): Trakt server reads
+reflected writes within ~1.3-3s in both plain and `marker=`-busted
+variants that day, weakening the "server cache expiry" hypothesis in
+this entry's stub; the likelier mechanism is sweep-trigger timing in
+the non-writing tab (a tab whose DOM is not mutating queues no scans,
+so `markersChanged()` goes unconsulted until an interaction mutates
+the DOM), and the diagnosis should start there.
 
 **Requires:** none.
 

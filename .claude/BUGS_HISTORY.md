@@ -37,3 +37,32 @@ open, verified live; the class alone also matches a permanently-rendered
 wrapper whose nonzero rect would have armed the shield forever).
 Verified live pre- and post-fix via trusted clicks and real scrolls in a
 single browser_batch call, which menus survive.
+
+### Anticipated/Uninterested quick toggles rarely take effect, and failures are silent
+
+Closed as diagnosed 2026-08-03, no code change: the write path is
+sound. Live e2e over the summary actions surface (installed Trakt
+Improved 1.27): three consecutive real-click toggles (add, remove,
+add) all landed server-side (verified by authenticated API reads),
+the optimistic patch, icon flip, menu dismissal, and post-write sweep
+all behaved, and no failure branch fired -- correctly silent, since
+every coded failure path in `performToggle`/`postToggle` shows a
+toast and none was taken. Root cause of the "rarely takes effect"
+perception: userscript writes are invisible to the app's own UI. The
+Manage lists panel renders from the app's client-side query cache and
+fires no request on reopen; the app's
+`trakt-marker:invalidate:*` localStorage markers are consumed only at
+page load to mint the per-session `marker=` cache-busting token on
+its `/v3` GETs, and the app registers no storage listener, so neither
+bumping a marker key nor dispatching a synthetic StorageEvent
+invalidates an open tab (all tested live). Verifying a quick toggle
+through Manage lists therefore always shows pre-write state until a
+full reload, which reads as a failed toggle. Historically the same
+perception was compounded by server-cache-stale sweep reads reverting
+the optimistic state, closed same-tab by the 1.26 confirmed-write
+ledger; the residual cross-tab fade lag is the still-open "Cross-tab
+list adds miss the fade treatment" entry, which this session's
+findings updated. The Manage-lists staleness itself is app-structural
+(no invalidation channel a script can drive); the script's own
+surfaces (entry icons, fades, failure toasts) remain the truthful
+verification points.

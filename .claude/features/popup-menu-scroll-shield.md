@@ -168,7 +168,15 @@ Alternatives considered and rejected:
   self-healing.
 - **Summary actions menu** (`div.trakt-summary-actions`, detail
   pages): inline element, not `.trakt-popup-menu-container`, does not
-  close on scroll, unaffected.
+  close on scroll, unaffected. **Falsified 2026-08-03**: on the episode
+  side-panel surface the app's boot scroll listener does close this
+  menu on main-page scrolls (panel-internal scrolls never reach it
+  because element scroll events do not bubble), so the shield now
+  covers it too; see the BUGS_HISTORY.md entry "Scroll shield never
+  armed for the summary actions menu" (fixed in Trakt Improved 1.27).
+  The open-state guard keys on the li-bearing menu element plus the
+  dismissal underlay, because the bare class also matches a
+  permanently-rendered wrapper with a nonzero rect.
 - **Filter pane, tooltips**: the `EventTracker` wheel listeners on
   `html` appear and disappear with other UI too (observed adds and
   removes while no popup was open). The shield keys on a rendered

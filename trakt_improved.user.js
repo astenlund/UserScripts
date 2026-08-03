@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.26
+// @version      1.27
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3223,12 +3223,13 @@
 
   // ---------------------------------------------------------------------
   // Feature: popup menu scroll shield
-  // Keeps the card/list kebab popup open while the page scrolls: while a
-  // popup menu is rendered and at least partially in the viewport, wheel
-  // and scroll events are swallowed at window capture before the app's
-  // closing listeners hear them (native scrolling is a default action and
-  // proceeds untouched). Once the menu is fully offscreen, events pass
-  // through and the app closes its own menu.
+  // Keeps the card/list kebab popup and the summary actions menu open
+  // while the page scrolls: while either menu is rendered and at least
+  // partially in the viewport, wheel and scroll events are swallowed at
+  // window capture before the app's closing listeners hear them (native
+  // scrolling is a default action and proceeds untouched). Once the menu
+  // is fully offscreen, events pass through and the app closes its own
+  // menu.
   // ---------------------------------------------------------------------
 
   (function initPopupScrollShield() {
@@ -3241,17 +3242,44 @@
     // collapsed ul rect, means no rendered menu, and arming anyway
     // would swallow every event for the session (a zero rect at 0,0
     // matches none of the offscreen tests).
-    function shield(e) {
+    function popupMenuRect() {
       const container = document.querySelector('.trakt-popup-menu-container');
-      if (!container) return;
+      if (!container) return null;
       const menu = container.querySelector('ul');
-      if (!menu) return;
-      const rect = menu.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-      // Fully offscreen: pass through so the app's own listeners close
-      // the menu; the app stays the sole closing authority.
-      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return;
-      e.stopImmediatePropagation();
+      return menu ? menu.getBoundingClientRect() : null;
+    }
+
+    // The summary actions menu closes on document scrolls too (observed
+    // live on the episode side panel, where the app's boot scroll
+    // listener hears main-page scrolls; panel-internal scrolls never
+    // reach it because scroll events do not bubble). Its class is shared
+    // by a permanently-rendered wrapper with a nonzero rect and no
+    // direct li rows, so keying on class presence alone would arm the
+    // shield forever on detail pages; the li-bearing menu element and
+    // the dismissal underlay both exist only while the menu is open
+    // (verified live 2026-08-03), and requiring both fails toward
+    // native app behavior.
+    function summaryMenuRect() {
+      if (!document.querySelector('.trakt-summary-actions-underlay')) return null;
+      for (const menu of document.querySelectorAll('div.trakt-summary-actions')) {
+        if (!menu.querySelector(':scope > li')) continue;
+        return menu.getBoundingClientRect();
+      }
+      return null;
+    }
+
+    // Fully offscreen counts as not shielded: events pass through so the
+    // app's own listeners close the menu; the app stays the sole closing
+    // authority.
+    function partlyOnscreen(rect) {
+      if (!rect || rect.width === 0 || rect.height === 0) return false;
+      return !(rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth);
+    }
+
+    function shield(e) {
+      if (partlyOnscreen(popupMenuRect()) || partlyOnscreen(summaryMenuRect())) {
+        e.stopImmediatePropagation();
+      }
     }
 
     window.addEventListener('wheel', shield, { capture: true, passive: true });

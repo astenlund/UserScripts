@@ -92,9 +92,12 @@ variants that day, weakening the "server cache expiry" hypothesis in
 this entry's stub; the likelier mechanism is sweep-trigger timing in
 the non-writing tab (a tab whose DOM is not mutating queues no scans,
 so `markersChanged()` goes unconsulted until an interaction mutates
-the DOM), and the diagnosis should start there.
+the DOM), and the diagnosis should start there. The fix is designed:
+the fresh-membership-sweeps feature's storage-event trigger closes
+the same-device window (cross-device staleness is a recorded
+anti-goal there); this entry archives when that feature ships.
 
-**Requires:** none.
+**Requires:** [fresh-membership-sweeps](features/fresh-membership-sweeps.md).
 
 ## History
 

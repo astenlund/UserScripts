@@ -90,8 +90,13 @@ Writes (`apiPost`) are unaffected.
 
 ## Part B: storage-event sweep triggers
 
-The membership engine registers one `window.addEventListener(
-'storage', ...)` filtered on keys starting with `MARKER_PREFIX` (a
+The membership engine registers one storage listener on `pageWindow`
+(the real page window, the same surface the fetch hook patches:
+storage events dispatch on the page window, sandbox-wrapper
+forwarding of window events is manager-dependent, and registering
+there makes a page-context e2e build exercise the same listener path
+as the released sandboxed build), filtered on keys starting with
+`MARKER_PREFIX` (a
 null key, as from `localStorage.clear()`, simply fails the prefix
 test). Storage events by spec fire only in tabs that did NOT perform
 the write, so every matching event is a foreign bump by
@@ -285,3 +290,4 @@ win).
 ## Hardening
 
 - revise-spec graduated 2026-08-04 00:15 at 29d3465, scope: whole file, content: d52b3cb8
+- revise-spec refreshed 2026-08-04 00:55 at e16c220, scope: whole file, content: 2e498852 (final-review fold-back)

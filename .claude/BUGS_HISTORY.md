@@ -56,8 +56,9 @@ page load to mint the per-session `marker=` cache-busting token on
 its `/v3` GETs, and the app registers no storage listener, so neither
 bumping a marker key nor dispatching a synthetic StorageEvent
 invalidates an open tab (all tested live). Verifying a quick toggle
-through Manage lists therefore always shows pre-write state until a
-full reload, which reads as a failed toggle. Historically the same
+through Manage lists therefore shows pre-write state until the app
+self-converges (~30s observed; a reload converges immediately),
+which reads as a failed toggle. Historically the same
 perception was compounded by server-cache-stale sweep reads reverting
 the optimistic state, closed same-tab by the 1.26 confirmed-write
 ledger; the residual cross-tab fade lag is the still-open "Cross-tab

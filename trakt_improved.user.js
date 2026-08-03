@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.27
+// @version      1.28
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -47,6 +47,18 @@
   // Inverse of mediaType, colocated so the mapping stays single-sourced.
   function mediaPathSegment(type) {
     return type === 'movie' ? 'movies' : 'shows';
+  }
+
+  // One shape test for /users/<owner>/lists/<slug> list-detail URLs:
+  // exactly 4 path segments, slug never 'view' (the overview tab prefix),
+  // query string ignored. Returns { owner, slug }, or null for anything
+  // else (lists index, smart list views, non-list pages).
+  function listPathParts(pathname) {
+    const segments = pathname.split('/').filter(Boolean);
+    if (segments.length === 4 && segments[0] === 'users' && segments[2] === 'lists' && segments[3] !== 'view') {
+      return { owner: segments[1], slug: segments[3] };
+    }
+    return null;
   }
 
   // All localStorage JSON goes through these guards: corrupt or unwritable
@@ -1184,19 +1196,6 @@
       return null;
     }
 
-    function pathSegments(pathname) {
-      return pathname.split('/').filter(Boolean);
-    }
-
-    // One shape test for /users/<owner>/lists/<slug> list URLs: exactly
-    // 4 segments, slug never 'view' (the overview tab prefix).
-    function listPathParts(segments) {
-      if (segments.length === 4 && segments[0] === 'users' && segments[2] === 'lists' && segments[3] !== 'view') {
-        return { owner: segments[1], slug: segments[3] };
-      }
-      return null;
-    }
-
     // Page-context classifier for the fade scope. 'discover' and 'smart'
     // carry no containing list; 'detail' is a list URL per listPathParts;
     // 'overview' is exactly /users/me/lists or /users/me/lists/view and
@@ -1206,12 +1205,12 @@
       const path = location.pathname;
       if (path === '/discover' || path.startsWith('/discover/')) return 'discover';
       if (path.startsWith('/lists/smart/view/')) return 'smart';
-      const segments = pathSegments(path);
+      const segments = path.split('/').filter(Boolean);
       if (segments[0] === 'users' && segments[1] === 'me' && segments[2] === 'lists'
           && (segments.length === 3 || segments[3] === 'view')) {
         return 'overview';
       }
-      return listPathParts(segments) ? 'detail' : null;
+      return listPathParts(path) ? 'detail' : null;
     }
 
     function listKeyKnown(owner, slug) {
@@ -1281,7 +1280,7 @@
     // resolution) and lane headings.
     function listPartsIn(container) {
       for (const anchor of container.querySelectorAll('a[href]')) {
-        const parts = listPathParts(pathSegments(new URL(anchor.href, location.origin).pathname));
+        const parts = listPathParts(new URL(anchor.href, location.origin).pathname);
         if (parts) return parts;
       }
       return null;
@@ -1318,7 +1317,7 @@
     function contributionResolver(context) {
       const OPEN = { contribution: 0, excludedCat: null, quickAllowed: true };
       if (context === 'detail') {
-        const parts = listPathParts(pathSegments(location.pathname));
+        const parts = listPathParts(location.pathname);
         const verdict = parts ? classifyParts(parts) : OPEN;
         return () => verdict;
       }
@@ -1836,15 +1835,14 @@
       return owner + '/' + slug;
     }
 
-    // A list detail path is exactly /users/<owner>/lists/<slug>, query
-    // string ignored. Returns null for anything else (lists index, smart
-    // list views, non-list pages).
+    // The shared listPathParts shape test, extended with this feature's
+    // canonical cache key.
     function parseListPath(pathname) {
-      const segments = pathname.split('/').filter(Boolean);
-      if (segments.length !== 4 || segments[0] !== 'users' || segments[2] !== 'lists') {
+      const parts = listPathParts(pathname);
+      if (!parts) {
         return null;
       }
-      return { kind: 'list', ownerSegment: segments[1], slug: segments[3], key: canonicalKey(segments[1], segments[3]) };
+      return { kind: 'list', ownerSegment: parts.owner, slug: parts.slug, key: canonicalKey(parts.owner, parts.slug) };
     }
 
     // Watchlists have no slug; their cache keys live under the
@@ -2256,11 +2254,8 @@
     let shapeWarned = false;
 
     function isTargetListPath(pathname) {
-      const segments = pathname.split('/').filter(Boolean);
-      if (segments.length !== 4 || segments[0] !== 'users' || segments[2] !== 'lists') {
-        return false;
-      }
-      return (segments[1] === 'me' || segments[1] === TRUNCATE_OWNER) && segments[3] === TRUNCATE_SLUG;
+      const parts = listPathParts(pathname);
+      return parts !== null && (parts.owner === 'me' || parts.owner === TRUNCATE_OWNER) && parts.slug === TRUNCATE_SLUG;
     }
 
     // Card and lane kebabs resolve through their container's anchors; a

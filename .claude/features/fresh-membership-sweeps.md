@@ -39,8 +39,14 @@ staleness bug.
 - The app's Manage lists panel renders from a client-side query
   cache: it fires no request on reopen, ignores same-tab localStorage
   marker writes and synthetic StorageEvents (both tested dead), and
-  self-converges within roughly 30s while open. No script-drivable
-  invalidation channel into the app exists.
+  refetches only when the app's own mutation-driven invalidation runs
+  (any native list-affecting action) or on a full reload. There is no
+  time-based self-convergence: a once-observed ~30s flip was a
+  confounded one-off, falsified 2026-08-04 under 1.29 (the flip did
+  prove the app's read was fresh at that instant, which is what
+  justified adopting busting; only the time-driven framing was
+  wrong). No script-drivable invalidation channel into the app
+  exists.
 
 ## Part A: marker-busted sweep reads
 
@@ -171,10 +177,15 @@ Interaction notes:
 
 - **Manage-lists row takeover (deferred).** Script-owned truth for
   the two quick-list rows inside the app's Manage lists panel was
-  considered and deferred: the panel self-converges in ~30s, part A
-  aligns the fades with that, and taking over app-managed Svelte
-  rows is the highest-cost option on the table. Revisit only if the
-  residual sub-30s panel lag proves annoying in practice.
+  considered and deferred: taking over app-managed Svelte rows is
+  the highest-cost option on the table, and the script's own
+  surfaces (menu entries, fades, toasts) stay truthful. The deferral
+  originally also leaned on an observed ~30s panel self-convergence,
+  falsified 2026-08-04 under 1.29: the panel converges only on the
+  app's next mutation-driven refetch (any native list-affecting
+  action) or a reload, so it can misreport quick-list membership
+  indefinitely. Revisit if that indefinite lag proves annoying in
+  practice.
 - **Out-of-partition staleness.** The storage-event channel is
   scoped to same-origin tabs of one browser profile. Writes made
   anywhere else on the same or another device (a different browser
@@ -301,3 +312,4 @@ win).
 - revise-spec refreshed 2026-08-04 00:55 at 648fd97, scope: whole file, content: 2e498852 (final-review fold-back; sha remapped after autosquash)
 - revise-spec refreshed 2026-08-04 01:22 at 648fd97, scope: whole file, content: ed12d8b3 (live-claim fold-back; sha remapped after autosquash)
 - handover completed 2026-08-04 02:25 at f2db8f4, scope: whole file, content: 3cf2d162 (sha remapped after autosquash)
+- revise-spec refreshed 2026-08-04 02:37 at 8324bc8, scope: whole file, content: 79c64052 (panel-convergence correction)

@@ -184,7 +184,19 @@ gates, move it out of `## Exploring` into the appropriate themed `##`
 section, add the `**Requires:**` line, and drop the `status: exploring`
 frontmatter on the breakout file.
 
-Nothing being explored yet.
+### [Manage-lists row takeover](features/manage-lists-row-takeover.md)
+
+Script-owned truth for the Anticipated/Uninterested rows inside the
+app's Manage lists panel: render membership from the script's engine
+and intercept clicks through `performToggle`, because the panel
+misreports quick-list membership after script writes until the user's
+next native action or a reload, and no externally drivable app
+refresh exists (QueryClient context-bound and unexported; no
+storage/BroadcastChannel/SW channel; verified 2026-08-04). Formerly a
+recorded anti-goal of fresh-membership-sweeps; promoted to exploring
+after the panel's assumed ~30s self-convergence was falsified. Open
+questions on panel row markup, Svelte re-render survival, and click
+interception live in the breakout file.
 
 ## History
 

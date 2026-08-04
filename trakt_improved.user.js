@@ -1826,15 +1826,26 @@
       return lbSearchUrl(title);
     }
 
+    // The href IDL getter re-serializes the URL (an apostrophe in a search
+    // query reads back as %27), so comparing anchor.href against the target
+    // string stays permanently unequal for some titles and the write would
+    // repeat every scan. The content attribute round-trips verbatim, so it
+    // is the comparable that actually settles.
+    function syncHref(anchor, url) {
+      if (anchor.getAttribute('href') !== url) {
+        anchor.href = url;
+      }
+    }
+
     // Native RT links are unreliable (sometimes missing, sometimes the wrong
     // title), so every one of them is repointed. Svelte re-renders restore the
     // original hrefs; the observer rescan puts ours back, and the equality
-    // check keeps the pass idempotent.
+    // check in syncHref keeps the pass idempotent.
     function rewriteRtAnchors(url) {
       for (const scope of document.querySelectorAll(REWRITE_SCOPES)) {
         for (const anchor of scope.querySelectorAll(RT_HREF_MATCH)) {
-          if (!anchor.closest('.' + CHIP_CLASS) && anchor.href !== url) {
-            anchor.href = url;
+          if (!anchor.closest('.' + CHIP_CLASS)) {
+            syncHref(anchor, url);
           }
         }
       }
@@ -1866,7 +1877,7 @@
         anchor.classList.add('trakt-link');
         if (anchor.getAttribute('target') !== '_blank') anchor.target = '_blank';
         if (anchor.getAttribute('rel') !== 'noopener') anchor.rel = 'noopener';
-        if (anchor.href !== url) anchor.href = url;
+        syncHref(anchor, url);
         if (svg.style.filter) svg.style.filter = '';
         item.classList.add('has-valid-rating');
       }
@@ -1914,8 +1925,8 @@
         tiles[tiles.length - 1].after(chip);
       }
       const anchor = chip.querySelector('a');
-      if (anchor && anchor.href !== url) {
-        anchor.href = url;
+      if (anchor) {
+        syncHref(anchor, url);
       }
     }
 

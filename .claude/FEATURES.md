@@ -173,6 +173,35 @@ is struck through. As each slice ships, append its entry to
 new next-to-ship slice's gates, and walk every other `**Requires:**`
 line in `FEATURES.md` / `BUGS.md` to drop now-satisfied references.
 
+## External links
+
+### [RT page bridge](features/rt-page-bridge.md)
+
+Fetch the resolved Rotten Tomatoes page (GM_xmlhttpRequest, new
+`@connect www.rottentomatoes.com`) and use it two ways: verify at
+resolution time that the Wikidata-bridged RT path actually matches
+the title (year primary with +-1 tolerance, title secondary and
+log-only; mismatch demotes the link to title search), and hydrate the
+"-" values on taken-over dead RT tiles with real critic/audience
+scores. Probed 2026-08-04: RT movie pages serve JSON-LD (name,
+dateCreated) plus a scorecard JSON (criticsScore/audienceScore) to a
+plain fetch. Cache entry widens (CACHE_VERSION bump); full consumer
+walk in the feature file.
+
+**Slices:**
+
+- **MVP -- link verification.** Verify rtPath in `resolveIds`, cache
+  the verdict as the (`rtPath`, `rtVerified`) pair plus, on match
+  only, `rtScores` from the same fetch, demote mismatches to search
+  links. No rendering changes.
+- **Score hydration.** Render tracked taken-over tiles' scores via a
+  closure-state tile tracker (identity-deduped, isConnected-filtered,
+  cleared on page-key change), 24h staleness refetch with in-flight
+  dedup and a fetchedAt stamp written even on failure, idempotent
+  text writes.
+
+**Requires:** none.
+
 ## Exploring
 
 Pre-dependency-analysis brainstorms live here. An entry is a draft

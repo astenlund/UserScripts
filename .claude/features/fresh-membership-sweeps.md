@@ -248,7 +248,8 @@ state):
   window is open. Otherwise the claim ships provisional, and the
   post-ship settling signal is the ledger's "expired still
   contradicted" warn staying absent in normal use. (live-claim:
-  provisional)
+  deferred 2026-08-04: no stale window occurred during verification;
+  user ruled the post-ship warn signal the settling mechanism)
 - Quick-toggle an item and watch cache state for 60s+: no revert,
   no suspect-resweep churn (fetchedAt resets once, then ages).
 - Two-tab, script flavor: with tab Y idle on a fade surface,

@@ -90,3 +90,36 @@ out-of-partition staleness stay TTL-driven, recorded as an explicit
 anti-goal in the feature spec. E2e-verified live: a foreign bump of
 the app's own listed:show marker drove exactly one sweep in an idle
 tab within ~6s with zero DOM interaction.
+
+### Injected RT chip duplicates dead native tiles instead of replacing them
+
+Fixed 2026-08-04 in commit 57c6407 (Trakt Improved 1.31). Root cause
+confirmed live on The Gentleman Thief (2026): dead RT tiles render as
+grayscale "-" placeholders whose anchor is a trakt-no-link self-link
+back to the title page, so both rewriteRtAnchors and the hasNativeRt
+guard (keyed on `a[href*="rottentomatoes."]`) were blind to them and
+scan injected the icon-only chip alongside the dead pair. Fix shape: a
+takeover pass (takeOverDeadRtTiles) recognizes dead RT tiles by their
+icon viewBoxes (critic tomato `0 0 145 140`, audience popcorn
+`0 0 80 80`; their hrefs carry nothing RT-identifying) and converts
+each to native-live-tile markup: trakt-no-link -> trakt-link (restores
+pointer-events), resolved RT URL plus target=_blank/rel=noopener,
+inline grayscale filter cleared, and has-valid-rating added -- the grey came from TWO
+stacked sources (the inline filter plus an app rule keyed on the item
+lacking has-valid-rating, hidden in a cross-origin stylesheet and thus
+invisible to cssRules walks; toggling classes while the inline filter
+still sat on the svg confounded the first diagnosis pass). Taken-over
+tiles then satisfy the untouched hasNativeRt guard, so the chip path
+self-heals any pre-existing duplicate. The chip remains only as a
+legacy fallback for rows with no RT tiles at all (current app markup
+always renders the pair, dead or alive, on movies and shows). Also
+fixed the undersized injected icons: app CSS renders tile icons at
+height 14 with width from the svg's attribute aspect ratio, and the
+ICONS drawings filled only about half their 24x24 viewBoxes; cropping
+the viewBoxes tight to the artwork (and matching the width/height
+attrs) brings them to native scale. No score fabrication: taken-over
+tiles keep "-" (RT score hydration is queued in FEATURES.md as part of
+the RT page bridge feature). E2e-verified via a namespaced tel2 bundle
+injected alongside the installed 1.30 copy: both dead tiles taken over
+with direct RT links in full color, zero RT chips from either
+instance, and live-RT pages (Inception, Breaking Bad) untouched.

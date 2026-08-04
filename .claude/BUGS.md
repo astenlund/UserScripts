@@ -42,29 +42,7 @@ consult `BUGS_HISTORY.md`.
 
 ## Open
 
-### Injected RT chip duplicates dead native tiles instead of replacing them
-
-On summary pages where the native ratings row renders dead Rotten
-Tomatoes tiles (the critic tomato and audience popcorn icons showing
-"-" with no link), initExternalLinks in trakt_improved.user.js still
-injects its icon-only RT chip, so the row shows duplicate RT icons
-(observed 2026-08-02 on Hadestown: The Musical). Hypothesis: the
-`hasNativeRt` guard in `scan` keys on an `a[href*="rottentomatoes."]`
-being present, and dead tiles render without an RT href, so the guard
-reads the row as having no native RT and adds a chip alongside the
-dead pair. Desired shape: when dead native RT tiles exist, take them
-over (repoint at the resolved RT URL) instead of adding a chip; when
-the row has no RT presence at all and a direct RT path is known,
-inject both tiles the way native renders them (critic and audience);
-fall back to a single icon-only chip only for the title-search
-fallback. Also upsize the injected icon: the `ICONS` SVGs render at
-18x18, visibly smaller than native tile icons. Open design question:
-the request says both critic and audience "scores" like native, but
-the script has no RT score source today (Wikidata bridges only the
-path), so decide at design time between linked icon tiles without
-numbers or adding a score source.
-
-**Requires:** none.
+No open bugs.
 
 ## History
 

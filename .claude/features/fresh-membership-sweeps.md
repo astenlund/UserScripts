@@ -298,6 +298,6 @@ win).
 ## Hardening
 
 - revise-spec graduated 2026-08-04 00:15 at 29d3465, scope: whole file, content: d52b3cb8
-- revise-spec refreshed 2026-08-04 00:55 at e16c220, scope: whole file, content: 2e498852 (final-review fold-back)
-- revise-spec refreshed 2026-08-04 01:22 at e1c9418, scope: whole file, content: ed12d8b3 (live-claim fold-back)
-- handover completed 2026-08-04 02:25 at 86523cb, scope: whole file, content: 3cf2d162
+- revise-spec refreshed 2026-08-04 00:55 at 648fd97, scope: whole file, content: 2e498852 (final-review fold-back; sha remapped after autosquash)
+- revise-spec refreshed 2026-08-04 01:22 at 648fd97, scope: whole file, content: ed12d8b3 (live-claim fold-back; sha remapped after autosquash)
+- handover completed 2026-08-04 02:25 at f2db8f4, scope: whole file, content: 3cf2d162 (sha remapped after autosquash)

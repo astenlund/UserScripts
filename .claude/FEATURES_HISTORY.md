@@ -64,7 +64,7 @@ what already shipped, not to resolve dependencies.
   debounce into the shared triggerForcedSweep helper). Fixes the
   same-tab 30s fade revert and the cross-tab fade staleness for
   same-origin tabs of one profile. Shipped 2026-08-04 in Trakt
-  Improved 1.29 (commits 13ea2f9, 899db77, 810d98f, 768ef3e plus
-  fixups pending autosquash); e2e-verified live with a namespaced
+  Improved 1.29 (commits 5f0b0ab, 648fd97, 25837e9, 1558add with
+  review fixes autosquashed in); e2e-verified live with a namespaced
   page-context build (all sweep URLs busted; a foreign marker bump
   drove exactly one sweep in an idle tab within ~6s).

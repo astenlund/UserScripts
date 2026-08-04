@@ -71,8 +71,8 @@ verification points.
 ### Cross-tab list adds miss the fade treatment until it eventually self-heals
 
 Fixed 2026-08-04 by the fresh-membership-sweeps feature (Trakt
-Improved 1.29, commits 13ea2f9, 899db77, 810d98f, 768ef3e plus fixups
-pending autosquash; design record in
+Improved 1.29, commits 5f0b0ab, 648fd97, 25837e9, 1558add with review
+fixes autosquashed in; design record in
 features/fresh-membership-sweeps.md). Diagnosed mechanism: the
 non-writing tab noticed foreign marker movement only through
 DOM-mutation-driven scans, so an idle tab waited out the 15-minute

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.29
+// @version      1.30
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -271,729 +271,438 @@
   // ---------------------------------------------------------------------
 
   const membership = (function initListMembership() {
-    const CACHE_KEY = 'trakt-fade-cache';
-    const CACHE_VERSION = 5;
-    const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
-    const MARKER_PREFIX = 'trakt-marker:invalidate:';
-    const SELF_MARKER_KEY = MARKER_PREFIX + 'fork-scripts-quick-lists';
-    // This tab's own last marker bump. refresh() re-merges it at commit
-    // (the snapshot captured at sweep start would otherwise erase a bump
-    // recorded mid-sweep), and it must merge only this OWN value, never
-    // the key's live localStorage value: both tabs write the same key, so
-    // the live value may carry another tab's bump, which must stay foreign
-    // for its invalidation to trip this tab.
-    let selfMarkerValue = null;
-    const CACHE_TTL_MS = 15 * 60 * 1000;
-    const PAGE_LIMIT = 1000;
-    // Settle window for the write-triggered corrector: longer than
-    // notifyMutation's MUTATION_SETTLE_MS because the observed server
-    // staleness already reached ~2s post-write. No settle value is
-    // sufficient alone (the lag is unbounded); the confirmed-write
-    // ledger below is the actual defense, this just cheapens the case
-    // where the forced sweep is the first post-write sweep.
-    const WRITE_SETTLE_MS = 2000;
+    // ---- Cache-and-sets store -----------------------------------------
 
-    // ---- Cache records and derived sets -------------------------------
+    // Persisted category records plus the derived slug sets. Sweep
+    // commits replace whole records via commit(); the optimistic toggle
+    // mutates the shared listed record in place and calls rebuildSets().
+    const store = (function initStore() {
+      const CACHE_KEY = 'trakt-fade-cache';
+      const CACHE_VERSION = 5;
+      const CACHE_TTL_MS = 15 * 60 * 1000;
 
-    // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
-    // except listed, which carries { counts, targets, keys, fetchedAt }
-    // (see fetchListedData): counts is consulted directly by the listed
-    // fade check, and keys holds the owner/slug identities that classify
-    // a viewed list as mine/saved for the containing-list exclusion; each
-    // non-null target carries fadeSlugs (the full itemSlug-mapped fade
-    // membership for quick-list fade categories) and key (the lowercased
-    // owner-slug/list-slug identity for own-surface exclusion). All under
-    // a top-level version stamp so a format change forces a refetch instead
-    // of serving entries the new matching logic misreads.
-    function normalizeCache(raw) {
-      const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
-      const cache = {};
-      for (const cat of CATEGORIES) {
-        const rec = versionOk ? raw[cat] : null;
-        if (cat === 'listed') {
-          const shapeOk = rec && typeof rec.fetchedAt === 'number'
-            && rec.counts && typeof rec.counts === 'object'
-            && rec.targets && typeof rec.targets === 'object'
-            && Array.isArray(rec.keys)
-            && Object.values(rec.targets).every(t => t === null || (t && typeof t.id === 'number' && Array.isArray(t.slugs)
-              && Array.isArray(t.fadeSlugs) && (t.key === null || typeof t.key === 'string')));
-          cache[cat] = shapeOk ? rec : null;
-        } else {
-          cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
+      // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
+      // except listed, which carries { counts, targets, keys, fetchedAt }
+      // (see fetchListedData): counts is consulted directly by the listed
+      // fade check, and keys holds the owner/slug identities that classify
+      // a viewed list as mine/saved for the containing-list exclusion; each
+      // non-null target carries fadeSlugs (the full itemSlug-mapped fade
+      // membership for quick-list fade categories) and key (the lowercased
+      // owner-slug/list-slug identity for own-surface exclusion). All under
+      // a top-level version stamp so a format change forces a refetch instead
+      // of serving entries the new matching logic misreads.
+      function normalizeCache(raw) {
+        const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
+        const cache = {};
+        for (const cat of CATEGORIES) {
+          const rec = versionOk ? raw[cat] : null;
+          if (cat === 'listed') {
+            const shapeOk = rec && typeof rec.fetchedAt === 'number'
+              && rec.counts && typeof rec.counts === 'object'
+              && rec.targets && typeof rec.targets === 'object'
+              && Array.isArray(rec.keys)
+              && Object.values(rec.targets).every(t => t === null || (t && typeof t.id === 'number' && Array.isArray(t.slugs)
+                && Array.isArray(t.fadeSlugs) && (t.key === null || typeof t.key === 'string')));
+            cache[cat] = shapeOk ? rec : null;
+          } else {
+            cache[cat] = rec && Array.isArray(rec.slugs) && typeof rec.fetchedAt === 'number' ? rec : null;
+          }
         }
+        return cache;
       }
-      return cache;
-    }
 
-    // No listed set: the listed fade check consults cache.listed.counts
-    // directly against a per-card threshold (see applyFades), so a set
-    // would be a second derivation to keep in sync. The quick-list sets
-    // derive from the listed record's targets (fadeSlugs, the
-    // counts-mirroring membership), not from own cache records.
-    function buildSets(cache) {
-      const sets = {};
-      for (const cat of CATEGORIES) {
-        if (cat === 'listed') continue;
-        sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
+      // No listed set: the listed fade check consults cache.listed.counts
+      // directly against a per-card threshold (see applyFades), so a set
+      // would be a second derivation to keep in sync. The quick-list sets
+      // derive from the listed record's targets (fadeSlugs, the
+      // counts-mirroring membership), not from own cache records.
+      function buildSets(cache) {
+        const sets = {};
+        for (const cat of CATEGORIES) {
+          if (cat === 'listed') continue;
+          sets[cat] = new Set(cache[cat] ? cache[cat].slugs : []);
+        }
+        for (const [cat, name] of Object.entries(QUICK_CATS)) {
+          const target = cache.listed && cache.listed.targets[name];
+          sets[cat] = new Set(target ? target.fadeSlugs : []);
+        }
+        return sets;
       }
-      for (const [cat, name] of Object.entries(QUICK_CATS)) {
-        const target = cache.listed && cache.listed.targets[name];
-        sets[cat] = new Set(target ? target.fadeSlugs : []);
+
+      const cache = normalizeCache(readJson(CACHE_KEY));
+      let sets = buildSets(cache);
+
+      function categoryStale(cat) {
+        return !cache[cat] || Date.now() - cache[cat].fetchedAt > CACHE_TTL_MS;
       }
-      return sets;
-    }
 
-    const cache = normalizeCache(readJson(CACHE_KEY));
-    let sets = buildSets(cache);
-
-    function persistCache() {
-      writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache));
-    }
+      return {
+        sets: () => sets,
+        listed: () => cache.listed,
+        commit: (cat, record) => {
+          cache[cat] = record;
+        },
+        rebuildSets: () => {
+          sets = buildSets(cache);
+        },
+        persist: () => writeJson(CACHE_KEY, Object.assign({ v: CACHE_VERSION }, cache)),
+        categoryStale,
+        cacheStale: () => CATEGORIES.some(cat => categoryStale(cat)),
+      };
+    })();
 
     // ---- Cross-tab invalidation markers -------------------------------
 
-    // Marker snapshot: captured at refresh start, committed when the refresh
-    // commits, so an app action landing mid-refresh still triggers a follow-up.
-    function currentMarkers() {
-      const markers = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(MARKER_PREFIX)) markers[key] = localStorage.getItem(key);
+    // Marker snapshot machinery: a live prefix scan of the app's
+    // trakt-marker:invalidate:* keys plus the script's own bump key,
+    // diffed against a baseline snapshot to detect foreign writes.
+    const markers = (function initMarkers() {
+      const MARKER_SNAPSHOT_KEY = 'trakt-fade-markers';
+      const MARKER_PREFIX = 'trakt-marker:invalidate:';
+      const SELF_MARKER_KEY = MARKER_PREFIX + 'fork-scripts-quick-lists';
+      // This tab's own last marker bump. The sweep re-merges it at commit
+      // (the snapshot captured at sweep start would otherwise erase a bump
+      // recorded mid-sweep), and it must merge only this OWN value, never
+      // the key's live localStorage value: both tabs write the same key, so
+      // the live value may carry another tab's bump, which must stay foreign
+      // for its invalidation to trip this tab.
+      let selfMarkerValue = null;
+
+      // Marker snapshot: captured at refresh start, committed when the refresh
+      // commits, so an app action landing mid-refresh still triggers a follow-up.
+      function currentMarkers() {
+        const live = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith(MARKER_PREFIX)) live[key] = localStorage.getItem(key);
+        }
+        return live;
       }
-      return markers;
-    }
 
-    let committedMarkers = readJson(MARKER_SNAPSHOT_KEY);
+      let committedMarkers = readJson(MARKER_SNAPSHOT_KEY);
 
-    // Shared marker diff: true when any key's value in the live scan
-    // differs from the baseline snapshot, minus exempted differences.
-    // Serves both the committed-snapshot staleness check below and the
-    // ledger's per-entry foreign-write check, whose baselines carry
-    // different merge histories (committed gets the own-bump merge at
-    // commit time; note-time snapshots need a live exemption instead).
-    function markersMovedSince(baseline, current, exempt) {
-      const keys = new Set([...Object.keys(current), ...Object.keys(baseline)]);
-      return [...keys].some(key => current[key] !== baseline[key] && !(exempt && exempt(key, current[key])));
-    }
+      // Shared marker diff: true when any key's value in the live scan
+      // differs from the baseline snapshot, minus exempted differences.
+      // Serves both the committed-snapshot staleness check below and the
+      // ledger's per-entry foreign-write check, whose baselines carry
+      // different merge histories (committed gets the own-bump merge at
+      // commit time; note-time snapshots need a live exemption instead).
+      function markersMovedSince(baseline, current, exempt) {
+        const keys = new Set([...Object.keys(current), ...Object.keys(baseline)]);
+        return [...keys].some(key => current[key] !== baseline[key] && !(exempt && exempt(key, current[key])));
+      }
 
-    function markersChanged() {
-      if (!committedMarkers || typeof committedMarkers !== 'object') return true;
-      return markersMovedSince(committedMarkers, currentMarkers());
-    }
+      function markersChanged() {
+        if (!committedMarkers || typeof committedMarkers !== 'object') return true;
+        return markersMovedSince(committedMarkers, currentMarkers());
+      }
+
+      // The snapshot was captured at sweep start (so an app action landing
+      // mid-refresh still triggers a follow-up), but this tab's own
+      // quick-toggle marker bump must never look foreign to this tab: merge
+      // it into whatever gets committed, or a bump recorded mid-sweep would
+      // be erased and re-trigger a pre-settle sweep here. Merge the tracked
+      // own value, not the key's live localStorage value (which may carry
+      // another tab's bump that must stay foreign), and never over a NEWER
+      // captured value: committing an older value over a foreign newer one
+      // would leave committed permanently behind localStorage and loop the
+      // sweep. Values are Date.now() strings, so compare numerically.
+      function commitMarkerSnapshot(captured) {
+        if (selfMarkerValue !== null && Number(captured[SELF_MARKER_KEY] || 0) <= Number(selfMarkerValue)) {
+          captured[SELF_MARKER_KEY] = selfMarkerValue;
+        }
+        committedMarkers = captured;
+        writeJson(MARKER_SNAPSHOT_KEY, captured);
+      }
+
+      // Cross-tab propagation for the toggles feature's sandbox-fetch writes,
+      // which other tabs' page-fetch hooks never see: bump the script-owned
+      // key under the app's invalidation-marker prefix (markersChanged()
+      // prefix-scans it in every tab). Recording the value into this tab's
+      // committed snapshot at bump time keeps the bump invisible here, so it
+      // cannot launch a pre-settle sweep in the tab that just wrote. Returns
+      // whether the live key held a value that is not this tab's own:
+      // overwriting it is the one act that can erase the evidence of a
+      // foreign bump before the ledger's per-entry snapshot comparison sees
+      // it, so the caller must surrender the ledger on true (surrender
+      // also fires when the overwrite itself failed and the evidence
+      // survives; conservative); the only residual blind spot is a
+      // foreign bump landing inside this read-then-write instant.
+      function bumpSelf() {
+        const value = String(Date.now());
+        let foreignObserved = false;
+        try {
+          foreignObserved = localStorage.getItem(SELF_MARKER_KEY) !== selfMarkerValue;
+          localStorage.setItem(SELF_MARKER_KEY, value);
+        } catch {
+          // Bump is best-effort; other tabs heal on TTL without it.
+          return foreignObserved;
+        }
+        selfMarkerValue = value;
+        if (committedMarkers && typeof committedMarkers === 'object') {
+          committedMarkers[SELF_MARKER_KEY] = value;
+          writeJson(MARKER_SNAPSHOT_KEY, committedMarkers);
+        }
+        return foreignObserved;
+      }
+
+      return {
+        current: currentMarkers,
+        changed: markersChanged,
+        commitSnapshot: commitMarkerSnapshot,
+        // Foreign-movement flavor for the ledger: exempts this tab's own
+        // tracked bump (a later own write must not read as foreign to a
+        // note-time snapshot); every other difference is another writer.
+        // Compared per entry against note-time baselines, never against
+        // the engine's committed snapshot: an unabsorbed bump that
+        // predates the write must not read as foreign to it.
+        foreignMovedSince: (baseline, current) => markersMovedSince(baseline, current,
+          (key, value) => key === SELF_MARKER_KEY && value === selfMarkerValue),
+        isMarkerKey: key => key.startsWith(MARKER_PREFIX),
+        bumpSelf,
+      };
+    })();
 
     // ---- API sweep fetchers -------------------------------------------
 
-    // Cache-busting nonce for sweep GETs, mirroring the app's own
-    // marker= mechanism against the same server-side cache (the app
-    // mints a per-page-load token; per-sweep uniqueness is all the
-    // busting needs). bustingDisabled is the per-tab latch for the
-    // server ever rejecting the param: 400/422 on a busted GET flips
-    // it and every later sweep this session runs marker-less,
-    // degrading to pre-1.29 behavior instead of a permanent sweep
-    // outage. In-memory on purpose: a server-side fix heals on the
-    // next page load. 401/403/404/429/5xx/network failures are NOT
-    // param rejections and keep their existing stale-keep + backoff
-    // routing untouched.
-    let bustingDisabled = false;
+    // The sweep's API reads and their result shaping, including the
+    // cache-busting nonce and the per-tab latch that degrades to
+    // marker-less GETs if the server ever rejects the param.
+    const fetchers = (function initFetchers() {
+      const PAGE_LIMIT = 1000;
 
-    function mintNonce() {
-      return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-    }
+      // Cache-busting nonce for sweep GETs, mirroring the app's own
+      // marker= mechanism against the same server-side cache (the app
+      // mints a per-page-load token; per-sweep uniqueness is all the
+      // busting needs). bustingDisabled is the per-tab latch for the
+      // server ever rejecting the param: 400/422 on a busted GET flips
+      // it and every later sweep this session runs marker-less,
+      // degrading to pre-1.29 behavior instead of a permanent sweep
+      // outage. In-memory on purpose: a server-side fix heals on the
+      // next page load. 401/403/404/429/5xx/network failures are NOT
+      // param rejections and keep their existing stale-keep + backoff
+      // routing untouched.
+      let bustingDisabled = false;
 
-    function noteBustingRejected(e) {
-      const message = String(e && e.message);
-      if (!bustingDisabled && (message.startsWith('HTTP 400 ') || message.startsWith('HTTP 422 '))) {
-        bustingDisabled = true;
-        warn('Server rejected the sweep cache-busting param; running marker-less until next page load', e);
+      function mintNonce() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
       }
-    }
 
-    // Shared busted-GET wrapper for the two nonce-carrying fetchers:
-    // applies the nonce and routes a param-rejection-shaped failure
-    // through the latch before re-raising the original error. The
-    // response comes back unconsumed.
-    async function bustedGet(auth, url, nonce) {
-      if (nonce) {
-        url.searchParams.set('marker', nonce);
+      function noteBustingRejected(e) {
+        const message = String(e && e.message);
+        if (!bustingDisabled && (message.startsWith('HTTP 400 ') || message.startsWith('HTTP 422 '))) {
+          bustingDisabled = true;
+          warn('Server rejected the sweep cache-busting param; running marker-less until next page load', e);
+        }
       }
-      try {
-        return await apiGet(auth, url);
-      } catch (e) {
+
+      // Shared busted-GET wrapper for the two nonce-carrying fetchers:
+      // applies the nonce and routes a param-rejection-shaped failure
+      // through the latch before re-raising the original error. The
+      // response comes back unconsumed.
+      async function bustedGet(auth, url, nonce) {
         if (nonce) {
-          noteBustingRejected(e);
+          url.searchParams.set('marker', nonce);
         }
-        throw e;
-      }
-    }
-
-    async function fetchPage(auth, path, page, nonce) {
-      const url = apiUrl(path);
-      url.searchParams.set('page', page);
-      url.searchParams.set('limit', PAGE_LIMIT);
-      const response = await bustedGet(auth, url, nonce);
-      const body = await response.json();
-      if (!Array.isArray(body)) throw new Error(`Unexpected response shape for ${path}`);
-      const pageCount = parseInt(response.headers.get('X-Pagination-Page-Count'), 10);
-      return { batch: body, pageCount: Number.isFinite(pageCount) ? pageCount : null };
-    }
-
-    // These endpoints paginate silently (a bare GET returns just page 1 as a
-    // plain 200), and the server may clamp the requested limit (observed:
-    // watched/shows clamps 1000 to 250), so a page shorter than the requested
-    // limit does NOT mean it was the last one. The X-Pagination-Page-Count
-    // header is authoritative; the short-page check is only a fallback for a
-    // missing header, and an empty batch is a hard stop either way.
-    async function fetchAll(auth, path) {
-      // One nonce per collection: a single mint site per call, not a
-      // cross-page consistency mechanism (each page URL is its own
-      // cache key either way; torn reads across pages match today's
-      // marker-less behavior and the next sweep owns healing them).
-      const nonce = bustingDisabled ? null : mintNonce();
-      const items = [];
-      for (let page = 1; ; page++) {
-        const { batch, pageCount } = await fetchPage(auth, path, page, nonce);
-        items.push(...batch);
-        if (batch.length === 0) return items;
-        if (pageCount !== null ? page >= pageCount : batch.length < PAGE_LIMIT) return items;
-      }
-    }
-
-    // extended=full suppresses the per-episode seasons breakdown entirely, so
-    // watched-vs-started needs this second variant: one un-paginated object
-    // mapping show trakt id -> "seasonId|seasonNumber" -> episode id -> watch
-    // dates. Per show this yields the unique watched-episode count and the
-    // numbers of seasons with at least one play, specials (season 0) excluded.
-    async function fetchWatchedProgress(auth) {
-      const url = apiUrl('/users/me/watched/shows');
-      url.searchParams.set('extended', 'min');
-      url.searchParams.set('season_numbers', 'true');
-      url.searchParams.set('specials', 'true');
-      const nonce = bustingDisabled ? null : mintNonce();
-      const response = await bustedGet(auth, url, nonce);
-      const body = await response.json();
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        throw new Error('Unexpected response shape for season_numbers');
-      }
-      const progress = {};
-      for (const [showId, seasons] of Object.entries(body)) {
-        const seasonNumbers = [];
-        let seen = 0;
-        for (const [seasonKey, episodes] of Object.entries(seasons)) {
-          const seasonNumber = seasonKey.split('|')[1];
-          if (seasonNumber === '0') continue;
-          const episodeCount = Object.keys(episodes).length;
-          if (episodeCount === 0) continue;
-          seen += episodeCount;
-          seasonNumbers.push(seasonNumber);
+        try {
+          return await apiGet(auth, url);
+        } catch (e) {
+          if (nonce) {
+            noteBustingRejected(e);
+          }
+          throw e;
         }
-        progress[showId] = { seen, seasons: seasonNumbers };
       }
-      return progress;
-    }
 
-    // Per-list results instead of a flat merge: the per-slug list counts
-    // feed the listed fade check directly and make removal unfade
-    // correctly (an item on two lists stays faded when it leaves one);
-    // the exact membership of the quick-toggle target lists drives
-    // the menu entries. Exact membership counts only items whose own type
-    // is show/movie: a season sitting in a list does not make its show a
-    // member, because the toggle operates on the show itself. A name that
-    // resolves to zero or multiple lists yields a null target (fail closed:
-    // writing to an arbitrarily-picked list is worse than a missing entry).
-    async function fetchListedData(auth) {
-      const lists = await fetchAll(auth, '/users/me/lists');
-      const withIds = lists.filter(list => list.ids && list.ids.trakt !== undefined);
-      const perList = await Promise.all(
-        withIds.map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
-      );
-      const targets = {};
-      const quickIndices = new Set();
-      for (const name of QUICK_LIST_NAMES) {
-        const indices = withIds.map((list, i) => (list.name === name ? i : -1)).filter(i => i >= 0);
-        if (indices.length !== 1) {
-          targets[name] = null;
-          continue;
+      async function fetchPage(auth, path, page, nonce) {
+        const url = apiUrl(path);
+        url.searchParams.set('page', page);
+        url.searchParams.set('limit', PAGE_LIMIT);
+        const response = await bustedGet(auth, url, nonce);
+        const body = await response.json();
+        if (!Array.isArray(body)) throw new Error(`Unexpected response shape for ${path}`);
+        const pageCount = parseInt(response.headers.get('X-Pagination-Page-Count'), 10);
+        return { batch: body, pageCount: Number.isFinite(pageCount) ? pageCount : null };
+      }
+
+      // These endpoints paginate silently (a bare GET returns just page 1 as a
+      // plain 200), and the server may clamp the requested limit (observed:
+      // watched/shows clamps 1000 to 250), so a page shorter than the requested
+      // limit does NOT mean it was the last one. The X-Pagination-Page-Count
+      // header is authoritative; the short-page check is only a fallback for a
+      // missing header, and an empty batch is a hard stop either way.
+      async function fetchAll(auth, path) {
+        // One nonce per collection: a single mint site per call, not a
+        // cross-page consistency mechanism (each page URL is its own
+        // cache key either way; torn reads across pages match today's
+        // marker-less behavior and the next sweep owns healing them).
+        const nonce = bustingDisabled ? null : mintNonce();
+        const items = [];
+        for (let page = 1; ; page++) {
+          const { batch, pageCount } = await fetchPage(auth, path, page, nonce);
+          items.push(...batch);
+          if (batch.length === 0) return items;
+          if (pageCount !== null ? page >= pageCount : batch.length < PAGE_LIMIT) return items;
         }
-        const index = indices[0];
-        quickIndices.add(index);
-        const list = withIds[index];
-        const exact = perList[index]
-          .filter(item => item.type === 'show' || item.type === 'movie')
-          .map(itemSlug)
+      }
+
+      // extended=full suppresses the per-episode seasons breakdown entirely, so
+      // watched-vs-started needs this second variant: one un-paginated object
+      // mapping show trakt id -> "seasonId|seasonNumber" -> episode id -> watch
+      // dates. Per show this yields the unique watched-episode count and the
+      // numbers of seasons with at least one play, specials (season 0) excluded.
+      async function fetchWatchedProgress(auth) {
+        const url = apiUrl('/users/me/watched/shows');
+        url.searchParams.set('extended', 'min');
+        url.searchParams.set('season_numbers', 'true');
+        url.searchParams.set('specials', 'true');
+        const nonce = bustingDisabled ? null : mintNonce();
+        const response = await bustedGet(auth, url, nonce);
+        const body = await response.json();
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          throw new Error('Unexpected response shape for season_numbers');
+        }
+        const progress = {};
+        for (const [showId, seasons] of Object.entries(body)) {
+          const seasonNumbers = [];
+          let seen = 0;
+          for (const [seasonKey, episodes] of Object.entries(seasons)) {
+            const seasonNumber = seasonKey.split('|')[1];
+            if (seasonNumber === '0') continue;
+            const episodeCount = Object.keys(episodes).length;
+            if (episodeCount === 0) continue;
+            seen += episodeCount;
+            seasonNumbers.push(seasonNumber);
+          }
+          progress[showId] = { seen, seasons: seasonNumbers };
+        }
+        return progress;
+      }
+
+      // Per-list results instead of a flat merge: the per-slug list counts
+      // feed the listed fade check directly and make removal unfade
+      // correctly (an item on two lists stays faded when it leaves one);
+      // the exact membership of the quick-toggle target lists drives
+      // the menu entries. Exact membership counts only items whose own type
+      // is show/movie: a season sitting in a list does not make its show a
+      // member, because the toggle operates on the show itself. A name that
+      // resolves to zero or multiple lists yields a null target (fail closed:
+      // writing to an arbitrarily-picked list is worse than a missing entry).
+      async function fetchListedData(auth) {
+        const lists = await fetchAll(auth, '/users/me/lists');
+        const withIds = lists.filter(list => list.ids && list.ids.trakt !== undefined);
+        const perList = await Promise.all(
+          withIds.map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
+        );
+        const targets = {};
+        const quickIndices = new Set();
+        for (const name of QUICK_LIST_NAMES) {
+          const indices = withIds.map((list, i) => (list.name === name ? i : -1)).filter(i => i >= 0);
+          if (indices.length !== 1) {
+            targets[name] = null;
+            continue;
+          }
+          const index = indices[0];
+          quickIndices.add(index);
+          const list = withIds[index];
+          const exact = perList[index]
+            .filter(item => item.type === 'show' || item.type === 'movie')
+            .map(itemSlug)
+            .filter(Boolean);
+          // fadeSlugs mirrors the counts/watchlisted mapping (a season or
+          // episode entry contributes its parent show) because it replaces
+          // the list's carved-out counts contribution as the fade source;
+          // slugs stays the exact show/movie membership the toggle menus
+          // need. key is the same owner/slug identity format `keys` uses,
+          // so the containing-list machinery can recognize the list's own
+          // surfaces.
+          const fadeSlugs = [...uniqueItemSlugs(perList[index])];
+          targets[name] = { id: list.ids.trakt, slugs: exact, fadeSlugs, key: listIdentityKey(list) };
+        }
+        // Quick lists are carved out of counts: their membership fades via
+        // the dedicated toggles instead, mirroring how the watchlist never
+        // counted toward Listed. A name that resolved to zero or multiple
+        // lists (null target) keeps counting, so a broken target degrades
+        // to the old fade-via-Listed behavior instead of un-fading items.
+        const counts = {};
+        perList.forEach((items, i) => {
+          if (quickIndices.has(i)) {
+            return;
+          }
+          for (const slug of uniqueItemSlugs(items)) {
+            counts[slug] = (counts[slug] || 0) + 1;
+          }
+        });
+        // Owner/slug identity keys let the fade threshold classify a viewed
+        // list as mine/saved. Lowercased here once; URL segments are
+        // lowercased at comparison time. A list missing either slug
+        // contributes no key (its detail page then reads as foreign).
+        const keys = withIds.map(listIdentityKey).filter(Boolean);
+        return { counts, targets, keys };
+      }
+
+      // Owner/slug identity ("<user slug>/<list slug>", lowercased) shared
+      // by the keys corpus and each quick target's own key; null when
+      // either slug is missing.
+      function listIdentityKey(list) {
+        return list.ids.slug && list.user && list.user.ids && list.user.ids.slug
+          ? (list.user.ids.slug + '/' + list.ids.slug).toLowerCase()
+          : null;
+      }
+
+      // Deduped membership slugs of a list's items under the itemSlug
+      // mapping (seasons and episodes contribute the parent show).
+      function uniqueItemSlugs(items) {
+        return new Set(items.map(itemSlug).filter(Boolean));
+      }
+
+      // Watchlist/list items are heterogeneous: shows and movies contribute their
+      // own slug, seasons/episodes map to the parent show, persons are ignored.
+      function itemSlug(item) {
+        switch (item.type) {
+          case 'show':
+            return item.show && item.show.ids && item.show.ids.slug ? 'show:' + item.show.ids.slug : null;
+          case 'movie':
+            return item.movie && item.movie.ids && item.movie.ids.slug ? 'movie:' + item.movie.ids.slug : null;
+          case 'season':
+          case 'episode':
+            return item.show && item.show.ids && item.show.ids.slug ? 'show:' + item.show.ids.slug : null;
+          default:
+            return null;
+        }
+      }
+
+      // Fully watched vs started: unique watched episode count (specials excluded)
+      // vs the show's aired_episodes (which also excludes specials), joined by the
+      // show's numeric trakt id. Each show contributes its own slug plus one
+      // show:<slug>:s<N> key per season with plays, so season cards fade by the
+      // season's own progress; the season keys follow the show's bucket since
+      // per-season aired counts are not available.
+      function splitWatchedShows(items, progress) {
+        const watched = [];
+        const started = [];
+        for (const item of items) {
+          const show = item.show;
+          if (!show || !show.ids || !show.ids.slug) continue;
+          const aired = show.aired_episodes || 0;
+          const p = progress[String(show.ids.trakt)] || { seen: 0, seasons: [] };
+          const slug = 'show:' + show.ids.slug;
+          const bucket = aired > 0 && p.seen >= aired ? watched : started;
+          bucket.push(slug, ...p.seasons.map(n => `${slug}:s${n}`));
+        }
+        return { watched, started };
+      }
+
+      function movieSlugs(items) {
+        return items
+          .map(item => (item.movie && item.movie.ids && item.movie.ids.slug ? 'movie:' + item.movie.ids.slug : null))
           .filter(Boolean);
-        // fadeSlugs mirrors the counts/watchlisted mapping (a season or
-        // episode entry contributes its parent show) because it replaces
-        // the list's carved-out counts contribution as the fade source;
-        // slugs stays the exact show/movie membership the toggle menus
-        // need. key is the same owner/slug identity format `keys` uses,
-        // so the containing-list machinery can recognize the list's own
-        // surfaces.
-        const fadeSlugs = [...uniqueItemSlugs(perList[index])];
-        targets[name] = { id: list.ids.trakt, slugs: exact, fadeSlugs, key: listIdentityKey(list) };
       }
-      // Quick lists are carved out of counts: their membership fades via
-      // the dedicated toggles instead, mirroring how the watchlist never
-      // counted toward Listed. A name that resolved to zero or multiple
-      // lists (null target) keeps counting, so a broken target degrades
-      // to the old fade-via-Listed behavior instead of un-fading items.
-      const counts = {};
-      perList.forEach((items, i) => {
-        if (quickIndices.has(i)) {
-          return;
-        }
-        for (const slug of uniqueItemSlugs(items)) {
-          counts[slug] = (counts[slug] || 0) + 1;
-        }
-      });
-      // Owner/slug identity keys let the fade threshold classify a viewed
-      // list as mine/saved. Lowercased here once; URL segments are
-      // lowercased at comparison time. A list missing either slug
-      // contributes no key (its detail page then reads as foreign).
-      const keys = withIds.map(listIdentityKey).filter(Boolean);
-      return { counts, targets, keys };
-    }
 
-    // Owner/slug identity ("<user slug>/<list slug>", lowercased) shared
-    // by the keys corpus and each quick target's own key; null when
-    // either slug is missing.
-    function listIdentityKey(list) {
-      return list.ids.slug && list.user && list.user.ids && list.user.ids.slug
-        ? (list.user.ids.slug + '/' + list.ids.slug).toLowerCase()
-        : null;
-    }
+      return { fetchAll, fetchWatchedProgress, fetchListedData, itemSlug, splitWatchedShows, movieSlugs };
+    })();
 
-    // Deduped membership slugs of a list's items under the itemSlug
-    // mapping (seasons and episodes contribute the parent show).
-    function uniqueItemSlugs(items) {
-      return new Set(items.map(itemSlug).filter(Boolean));
-    }
-
-    // Watchlist/list items are heterogeneous: shows and movies contribute their
-    // own slug, seasons/episodes map to the parent show, persons are ignored.
-    function itemSlug(item) {
-      switch (item.type) {
-        case 'show':
-          return item.show && item.show.ids && item.show.ids.slug ? 'show:' + item.show.ids.slug : null;
-        case 'movie':
-          return item.movie && item.movie.ids && item.movie.ids.slug ? 'movie:' + item.movie.ids.slug : null;
-        case 'season':
-        case 'episode':
-          return item.show && item.show.ids && item.show.ids.slug ? 'show:' + item.show.ids.slug : null;
-        default:
-          return null;
-      }
-    }
-
-    // Fully watched vs started: unique watched episode count (specials excluded)
-    // vs the show's aired_episodes (which also excludes specials), joined by the
-    // show's numeric trakt id. Each show contributes its own slug plus one
-    // show:<slug>:s<N> key per season with plays, so season cards fade by the
-    // season's own progress; the season keys follow the show's bucket since
-    // per-season aired counts are not available.
-    function splitWatchedShows(items, progress) {
-      const watched = [];
-      const started = [];
-      for (const item of items) {
-        const show = item.show;
-        if (!show || !show.ids || !show.ids.slug) continue;
-        const aired = show.aired_episodes || 0;
-        const p = progress[String(show.ids.trakt)] || { seen: 0, seasons: [] };
-        const slug = 'show:' + show.ids.slug;
-        const bucket = aired > 0 && p.seen >= aired ? watched : started;
-        bucket.push(slug, ...p.seasons.map(n => `${slug}:s${n}`));
-      }
-      return { watched, started };
-    }
-
-    function movieSlugs(items) {
-      return items
-        .map(item => (item.movie && item.movie.ids && item.movie.ids.slug ? 'movie:' + item.movie.ids.slug : null))
-        .filter(Boolean);
-    }
-
-    // ---- Sweep scheduling ---------------------------------------------
-
-    function categoryStale(cat) {
-      return !cache[cat] || Date.now() - cache[cat].fetchedAt > CACHE_TTL_MS;
-    }
-
-    function cacheStale() {
-      return CATEGORIES.some(cat => categoryStale(cat));
-    }
-
-    let refreshInFlight = false;
-    let lastFailureAt = 0;
-    let forceRefresh = false;
-    // A failed forced sweep must not consume its trigger: refresh() clears
-    // forceRefresh before fetching and commits the marker snapshot even on
-    // total failure, so without this re-arm a failed post-write corrector
-    // would leave nothing but TTL age to retry on. Unlike forceRefresh,
-    // the re-armed flag respects the failure backoff.
-    let rearmedRefresh = false;
-    // Post-write refresh queueing: a sweep whose fetches predate a write
-    // would clobber the optimistic state when it commits, so a write that
-    // settles mid-sweep queues a fresh forced sweep instead of being
-    // silently dropped by the single-flight guard.
-    let pendingForcedRefresh = false;
-    let sweepStartedAt = 0;
-
-    // A mutation-triggered refresh bypasses the failure backoff (see
-    // refresh()): user actions are rare and deserve promptness. The shared
-    // hook queues the scan that notices the flag; the marker mechanism stays
-    // as backup and for actions performed in other tabs.
-    mutationCallbacks.push(() => {
-      forceRefresh = true;
-    });
-
-    // Forced-sweep trigger respecting the single-flight guard: a
-    // sweep already in flight cannot be trusted to have seen the
-    // demand, so the follow-up is queued instead and drained when
-    // that sweep commits (the tail of refresh()). Shared by the
-    // storage listener below and the suspect resweep; the
-    // write-settle trigger keeps its own guarded variant, which
-    // additionally checks sweep coverage via sweepStartedAt.
-    function triggerForcedSweep() {
-      if (refreshInFlight) {
-        pendingForcedRefresh = true;
-      } else {
-        forceRefresh = true;
-        queueRefresh();
-      }
-    }
-
-    // Cross-tab prompt trigger: another tab's marker bump (script
-    // quick-toggle via SELF_MARKER_KEY, or the app's own
-    // trakt-marker:invalidate:* bumps on native actions; the exact
-    // app key names are unverified, observed live e.g. listed:show)
-    // sweeps this tab without waiting for a DOM-mutation scan, which
-    // an idle tab may never run. Storage events fire only in tabs
-    // that did not perform the write, so every matching event is
-    // foreign by construction (a null key, as from localStorage
-    // .clear(), fails the prefix test). The single debounced timer
-    // waits WRITE_SETTLE_MS before sweeping: the writer bumps the
-    // instant its POST resolves, and a zero-delay read could commit
-    // pre-write server state as fresh with no ledger entry here to
-    // correct it. The settle timer hands off to triggerForcedSweep
-    // (shared with the suspect resweep); the scan-driven
-    // markersChanged() check stays as catch-up for bumps that landed
-    // while no listener was alive.
-    // Registered on pageWindow (the real page window, the same
-    // surface the fetch hook patches): storage events dispatch on
-    // the page window, sandbox-wrapper forwarding is
-    // manager-dependent, and attaching there makes the page-context
-    // e2e build's listener path identical to the released sandboxed
-    // build.
-    let foreignBumpTimer = 0;
-    pageWindow.addEventListener('storage', e => {
-      if (!e.key || !e.key.startsWith(MARKER_PREFIX)) return;
-      clearTimeout(foreignBumpTimer);
-      foreignBumpTimer = setTimeout(() => {
-        foreignBumpTimer = 0;
-        triggerForcedSweep();
-      }, WRITE_SETTLE_MS);
-    });
-
-    // The snapshot was captured at sweep start (so an app action landing
-    // mid-refresh still triggers a follow-up), but this tab's own
-    // quick-toggle marker bump must never look foreign to this tab: merge
-    // it into whatever gets committed, or a bump recorded mid-sweep would
-    // be erased and re-trigger a pre-settle sweep here. Merge the tracked
-    // own value, not the key's live localStorage value (which may carry
-    // another tab's bump that must stay foreign), and never over a NEWER
-    // captured value: committing an older value over a foreign newer one
-    // would leave committed permanently behind localStorage and loop the
-    // sweep. Values are Date.now() strings, so compare numerically.
-    function commitMarkerSnapshot(captured) {
-      if (selfMarkerValue !== null && Number(captured[SELF_MARKER_KEY] || 0) <= Number(selfMarkerValue)) {
-        captured[SELF_MARKER_KEY] = selfMarkerValue;
-      }
-      committedMarkers = captured;
-      writeJson(MARKER_SNAPSHOT_KEY, captured);
-    }
-
-    // ---- Confirmed-write ledger ---------------------------------------
-
-    // The script's own body-judged-successful quick-toggle writes,
-    // defended against server-cache-stale corrector reads until the trust
-    // window closes. Tab-local and non-persisted on purpose: cross-tab
-    // staleness is another tab's problem to heal, and a reload inside the
-    // window is left to self-healing. Entries leave by agreement, expiry,
-    // or a foreign-write drop; past the window server truth wins
-    // unconditionally.
-    const WRITE_TRUST_WINDOW_MS = 30 * 1000;
-    const SUSPECT_RETRY_BASE_MS = 5 * 1000;
-    const confirmedWrites = new Map();
-    let nextRetryDelay = SUSPECT_RETRY_BASE_MS;
-    let retryTimer = 0;
-
-    function cancelRetryTimer() {
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-        retryTimer = 0;
-      }
-    }
-
-    // Foreign movement relative to a ledger entry's note-time snapshot,
-    // judged against one live scan the reconcile pass shares across all
-    // entries. Compared per entry, never against the engine's committed
-    // snapshot: an unabsorbed bump that predates the write must not read
-    // as foreign to it. This tab's own later bumps are exempted via
-    // selfMarkerValue; every other difference is another writer and wins.
-    function foreignMarkersMoved(snapshot, current) {
-      return markersMovedSince(snapshot, current, (key, value) => key === SELF_MARKER_KEY && value === selfMarkerValue);
-    }
-
-    // Commit-time reconciliation: runs against the fetched listed record
-    // BEFORE it becomes cache, so every post-confirmation fetch/write
-    // interleaving is covered at the single commit point. Expiry first
-    // (with diagnostics: a still-contradicted expiry means the server
-    // never caught up and the stale-read bug recurred for that item; a
-    // missing target means the entry expired unverifiable), then the
-    // foreign-marker drop, then patch-or-agree via the shared helper,
-    // whose true return IS the contradiction signal. Suspect commits are
-    // not failures: no lastFailureAt, no backoff, no rearm.
-    function reconcileConfirmedWrites(targets, now) {
-      let suspect = false;
-      // Empty ledger: nothing to defend, and no timer can be pending
-      // (every path that empties the ledger cancels it), so skip the
-      // marker scan entirely.
-      if (confirmedWrites.size === 0) return suspect;
-      const liveMarkers = currentMarkers();
-      for (const [key, entry] of confirmedWrites) {
-        const target = targets[entry.name];
-        if (now - entry.confirmedAt > WRITE_TRUST_WINDOW_MS) {
-          if (!target) {
-            warn(`Confirmed ${entry.add ? 'add' : 'remove'} of ${entry.slugKey} expired unverifiable; list "${entry.name}" never re-resolved`);
-          } else if (target.slugs.includes(entry.slugKey) !== entry.add) {
-            warn(`Confirmed ${entry.add ? 'add' : 'remove'} of ${entry.slugKey} expired still contradicted; the server never caught up`);
-          }
-          confirmedWrites.delete(key);
-          continue;
-        }
-        if (foreignMarkersMoved(entry.markers, liveMarkers)) {
-          confirmedWrites.delete(key);
-          continue;
-        }
-        if (!target) continue;
-        if (patchTargetMembership(target, entry.slugKey, entry.add)) {
-          suspect = true;
-        } else {
-          confirmedWrites.delete(key);
-        }
-      }
-      if (confirmedWrites.size === 0) cancelRetryTimer();
-      return suspect;
-    }
-
-    // One pending retry at a time; the ladder (5s, 10s, 20s) advances
-    // only when a retry is actually scheduled, so the two early sweeps
-    // one write can produce advance it at most once. The trust window
-    // terminates the loop: a retry firing past it prunes the entry and
-    // commits server truth.
-    function scheduleSuspectResweep() {
-      if (retryTimer) return;
-      retryTimer = setTimeout(() => {
-        retryTimer = 0;
-        triggerForcedSweep();
-      }, nextRetryDelay);
-      nextRetryDelay *= 2;
-    }
-
-    // ---- Sweep execution ----------------------------------------------
-
-    // Single-flight, atomic per category: a category's record is replaced only
-    // when every fetch it depends on succeeded; otherwise it keeps its stale
-    // record wholesale and the backoff gates the next attempt.
-    async function refresh() {
-      if (refreshInFlight) return;
-      // A mutation-triggered refresh bypasses the failure backoff: user actions
-      // are rare and deserve promptness. Ordinary staleness and the re-armed
-      // retry after a failed forced sweep still respect it.
-      if (!forceRefresh && Date.now() - lastFailureAt < RETRY_BACKOFF_MS) return;
-      const auth = readAuth();
-      if (!auth) {
-        warn('No Trakt access token in localStorage; fading stays on cached/empty data until login');
-        lastFailureAt = Date.now();
-        return;
-      }
-      const wasForced = forceRefresh || rearmedRefresh;
-      forceRefresh = false;
-      rearmedRefresh = false;
-      refreshInFlight = true;
-      sweepStartedAt = Date.now();
-      try {
-        const captured = currentMarkers();
-        const [shows, progress, movies, watchlist, listed] = await Promise.allSettled([
-          fetchAll(auth, '/users/me/watched/shows?extended=full'),
-          fetchWatchedProgress(auth),
-          fetchAll(auth, '/users/me/watched/movies'),
-          fetchAll(auth, '/users/me/watchlist'),
-          fetchListedData(auth),
-        ]);
-        const now = Date.now();
-        let anyFailed = false;
-        let changed = false;
-
-        if (shows.status === 'fulfilled' && progress.status === 'fulfilled' && movies.status === 'fulfilled') {
-          const split = splitWatchedShows(shows.value, progress.value);
-          cache.watched = { slugs: [...split.watched, ...movieSlugs(movies.value)], fetchedAt: now };
-          cache.started = { slugs: split.started, fetchedAt: now };
-          changed = true;
-        } else {
-          anyFailed = true;
-          warn('Watched/started refresh failed; keeping stale data', shows.reason || progress.reason || movies.reason);
-        }
-
-        if (watchlist.status === 'fulfilled') {
-          cache.watchlisted = { slugs: watchlist.value.map(itemSlug).filter(Boolean), fetchedAt: now };
-          changed = true;
-        } else {
-          anyFailed = true;
-          warn('Watchlist refresh failed; keeping stale data', watchlist.reason);
-        }
-
-        if (listed.status === 'fulfilled') {
-          const suspect = reconcileConfirmedWrites(listed.value.targets, now);
-          cache.listed = Object.assign({}, listed.value, { fetchedAt: now });
-          changed = true;
-          if (suspect) scheduleSuspectResweep();
-        } else {
-          anyFailed = true;
-          warn('List-membership refresh failed; keeping stale data', listed.reason);
-        }
-
-        if (changed) {
-          persistCache();
-          sets = buildSets(cache);
-        }
-        commitMarkerSnapshot(captured);
-        if (anyFailed) {
-          lastFailureAt = now;
-          if (wasForced) {
-            rearmedRefresh = true;
-          }
-        }
-        if (changed) queueScan();
-      } finally {
-        refreshInFlight = false;
-      }
-      if (pendingForcedRefresh) {
-        pendingForcedRefresh = false;
-        forceRefresh = true;
-        await refresh();
-      }
-    }
-
-    function queueRefresh() {
-      refresh().catch(e => {
-        warn('Refresh failed unexpectedly', e);
-        lastFailureAt = Date.now();
-      });
-    }
-
-    // ---- Consumer surfaces --------------------------------------------
-
-    // The full staleness condition for membership data mirrors the fade
-    // scan's own refresh trigger: TTL age alone would miss app-driven
-    // changes (a native Manage-lists tick sets the mutation-forced flag;
-    // another tab's change lands via the invalidation markers), leaving
-    // toggle icons wrong for the full TTL on pages where the fade scan
-    // (and with it the scan-triggered refresh) is inactive.
-    function membershipStale() {
-      return forceRefresh || rearmedRefresh || markersChanged() || categoryStale('listed');
-    }
-
-    quickLists.membershipState = () => {
-      if (!cache.listed) return 'absent';
-      return membershipStale() ? 'stale' : 'fresh';
-    };
-
-    // null strictly means "data exists but the name resolved to zero or
-    // multiple lists"; callers must gate on membershipState() !== 'absent'
-    // before consulting targets, so the two no-entry states stay distinct.
-    quickLists.getListTarget = name => {
-      if (!cache.listed || !cache.listed.targets[name]) return null;
-      const target = cache.listed.targets[name];
-      return { id: target.id, has: slugKey => target.slugs.includes(slugKey) };
-    };
-
-    // Cross-tab propagation for the toggles feature's sandbox-fetch writes,
-    // which other tabs' page-fetch hooks never see: bump a script-owned key
-    // under the app's invalidation-marker prefix (markersChanged() prefix-
-    // scans it in every tab). Recording the value into this tab's committed
-    // snapshot at bump time keeps the bump invisible here, so it cannot
-    // launch a pre-settle sweep in the tab that just wrote.
-    quickLists.bumpInvalidationMarker = () => {
-      const value = String(Date.now());
-      try {
-        // Both tabs write this key, and overwriting it is the one act
-        // that can erase the evidence of a foreign bump before the
-        // ledger's per-entry snapshot comparison sees it. Read first and
-        // surrender the ledger when the live value is not this tab's
-        // own; the only residual blind spot is a foreign bump landing
-        // inside this read-then-write instant.
-        if (localStorage.getItem(SELF_MARKER_KEY) !== selfMarkerValue) {
-          quickLists.dropConfirmedWrites();
-        }
-        localStorage.setItem(SELF_MARKER_KEY, value);
-      } catch {
-        // Bump is best-effort; other tabs heal on TTL without it.
-        return;
-      }
-      selfMarkerValue = value;
-      if (committedMarkers && typeof committedMarkers === 'object') {
-        committedMarkers[SELF_MARKER_KEY] = value;
-        writeJson(MARKER_SNAPSHOT_KEY, committedMarkers);
-      }
-    };
-
-    // Ledger writer for the toggles feature: called only on body-judged
-    // success, AFTER bumpInvalidationMarker (the captured snapshot must
-    // include this write's own bump, or the entry would read itself as
-    // foreign). Latest write to the same item wins. A new write resets
-    // the retry ladder but leaves a pending retry timer alone: the
-    // write's own write-triggered sweep already covers promptness.
-    quickLists.noteConfirmedWrite = (name, slugKey, add) => {
-      confirmedWrites.set(`${name}:${slugKey}`, { name, slugKey, add, confirmedAt: Date.now(), markers: currentMarkers() });
-      nextRetryDelay = SUSPECT_RETRY_BASE_MS;
-    };
-
-    // Foreign-write surrender: neither drop signal says what changed, so
-    // the whole ledger yields. Deliberately coarse: it may abandon
-    // protection for an unrelated pending write, trading a rare transient
-    // revert for never knowingly fighting another writer.
-    quickLists.dropConfirmedWrites = () => {
-      confirmedWrites.clear();
-      cancelRetryTimer();
-    };
-
-    // Write-triggered flavor: waits a longer settle window than
-    // notifyMutation's (the server needs time to reflect the write before
-    // a refetch, or the sweep reads pre-write state and stamps it fresh),
-    // rides the pending flag when the in-flight sweep cannot be trusted to
-    // have seen the write, and bypasses the backoff via forceRefresh. A
-    // sweep counts as covering the write only when it started AFTER the
-    // settle window closed: one that started inside the window may still
-    // have fetched pre-write state (one click, one sweep otherwise), which
-    // with the widened window guarantees a post-settle sweep exists.
-    // Menu-open flavor: staleness-gated, respects backoff.
-    quickLists.refreshMembership = ({ writeTriggered = false } = {}) => {
-      if (!writeTriggered) {
-        if (membershipStale()) queueRefresh();
-        return;
-      }
-      const settledAt = Date.now();
-      setTimeout(() => {
-        if (refreshInFlight) {
-          if (sweepStartedAt < settledAt + WRITE_SETTLE_MS) pendingForcedRefresh = true;
-        } else {
-          forceRefresh = true;
-          queueRefresh();
-        }
-      }, WRITE_SETTLE_MS);
-    };
-
-    // Shared membership patch for the optimistic toggle and the sweep's
+    // Shared membership patch for the optimistic toggle and the ledger's
     // commit-time reconciliation. The exact-membership guard lives INSIDE
     // and short-circuits BEFORE either set is touched: fadeSlugs is a
     // strict superset of slugs (a season entry contributes its parent
@@ -1020,6 +729,367 @@
       return true;
     }
 
+    // ---- Confirmed-write ledger ---------------------------------------
+
+    // The script's own body-judged-successful quick-toggle writes,
+    // defended against server-cache-stale corrector reads until the trust
+    // window closes. Tab-local and non-persisted on purpose: cross-tab
+    // staleness is another tab's problem to heal, and a reload inside the
+    // window is left to self-healing. Entries leave by agreement, expiry,
+    // or a foreign-write drop; past the window server truth wins
+    // unconditionally.
+    const ledger = (function initLedger() {
+      const WRITE_TRUST_WINDOW_MS = 30 * 1000;
+      const SUSPECT_RETRY_BASE_MS = 5 * 1000;
+      const confirmedWrites = new Map();
+      let nextRetryDelay = SUSPECT_RETRY_BASE_MS;
+      let retryTimer = 0;
+
+      function cancelRetryTimer() {
+        if (retryTimer) {
+          clearTimeout(retryTimer);
+          retryTimer = 0;
+        }
+      }
+
+      // Commit-time reconciliation: runs against the fetched listed record
+      // BEFORE it becomes cache, so every post-confirmation fetch/write
+      // interleaving is covered at the single commit point. Expiry first
+      // (with diagnostics: a still-contradicted expiry means the server
+      // never caught up and the stale-read bug recurred for that item; a
+      // missing target means the entry expired unverifiable), then the
+      // foreign-marker drop (judged per entry against its note-time
+      // snapshot and one live scan shared across all entries), then
+      // patch-or-agree via the shared helper, whose true return IS the
+      // contradiction signal. Suspect commits are not failures: no
+      // lastFailureAt, no backoff, no rearm.
+      function reconcile(targets, now) {
+        let suspect = false;
+        // Empty ledger: nothing to defend, and no timer can be pending
+        // (every path that empties the ledger cancels it), so skip the
+        // marker scan entirely.
+        if (confirmedWrites.size === 0) return suspect;
+        const liveMarkers = markers.current();
+        for (const [key, entry] of confirmedWrites) {
+          const target = targets[entry.name];
+          if (now - entry.confirmedAt > WRITE_TRUST_WINDOW_MS) {
+            if (!target) {
+              warn(`Confirmed ${entry.add ? 'add' : 'remove'} of ${entry.slugKey} expired unverifiable; list "${entry.name}" never re-resolved`);
+            } else if (target.slugs.includes(entry.slugKey) !== entry.add) {
+              warn(`Confirmed ${entry.add ? 'add' : 'remove'} of ${entry.slugKey} expired still contradicted; the server never caught up`);
+            }
+            confirmedWrites.delete(key);
+            continue;
+          }
+          if (markers.foreignMovedSince(entry.snapshot, liveMarkers)) {
+            confirmedWrites.delete(key);
+            continue;
+          }
+          if (!target) continue;
+          if (patchTargetMembership(target, entry.slugKey, entry.add)) {
+            suspect = true;
+          } else {
+            confirmedWrites.delete(key);
+          }
+        }
+        if (confirmedWrites.size === 0) cancelRetryTimer();
+        return suspect;
+      }
+
+      // One pending retry at a time; the ladder (5s, 10s, 20s) advances
+      // only when a retry is actually scheduled, so the two early sweeps
+      // one write can produce advance it at most once. The trust window
+      // terminates the loop: a retry firing past it prunes the entry and
+      // commits server truth. sweep is a later sibling sub-closure; the
+      // timer body only runs long after every sibling is initialized.
+      function scheduleSuspectResweep() {
+        if (retryTimer) return;
+        retryTimer = setTimeout(() => {
+          retryTimer = 0;
+          sweep.triggerForcedSweep();
+        }, nextRetryDelay);
+        nextRetryDelay *= 2;
+      }
+
+      return {
+        reconcile,
+        scheduleSuspectResweep,
+        // Called only on body-judged success, AFTER the marker bump (the
+        // captured snapshot must include this write's own bump, or the
+        // entry would read itself as foreign). Latest write to the same
+        // item wins. A new write resets the retry ladder but leaves a
+        // pending retry timer alone: the write's own write-triggered
+        // sweep already covers promptness.
+        note: (name, slugKey, add) => {
+          confirmedWrites.set(`${name}:${slugKey}`, { name, slugKey, add, confirmedAt: Date.now(), snapshot: markers.current() });
+          nextRetryDelay = SUSPECT_RETRY_BASE_MS;
+        },
+        // Foreign-write surrender: neither drop signal says what changed,
+        // so the whole ledger yields. Deliberately coarse: it may abandon
+        // protection for an unrelated pending write, trading a rare
+        // transient revert for never knowingly fighting another writer.
+        drop: () => {
+          confirmedWrites.clear();
+          cancelRetryTimer();
+        },
+      };
+    })();
+
+    // ---- Sweep controller ---------------------------------------------
+
+    // The single-flight refresh, its trigger flags, and every sweep
+    // trigger: the DOM-mutation hook, the cross-tab storage listener,
+    // and the shared forced-sweep entry point.
+    const sweep = (function initSweep() {
+      // Settle window for the write-triggered corrector: longer than
+      // notifyMutation's MUTATION_SETTLE_MS because the observed server
+      // staleness already reached ~2s post-write. No settle value is
+      // sufficient alone (the lag is unbounded); the confirmed-write
+      // ledger is the actual defense, this just cheapens the case where
+      // the forced sweep is the first post-write sweep.
+      const WRITE_SETTLE_MS = 2000;
+
+      let refreshInFlight = false;
+      let lastFailureAt = 0;
+      let forceRefresh = false;
+      // A failed forced sweep must not consume its trigger: refresh() clears
+      // forceRefresh before fetching and commits the marker snapshot even on
+      // total failure, so without this re-arm a failed post-write corrector
+      // would leave nothing but TTL age to retry on. Unlike forceRefresh,
+      // the re-armed flag respects the failure backoff.
+      let rearmedRefresh = false;
+      // Post-write refresh queueing: a sweep whose fetches predate a write
+      // would clobber the optimistic state when it commits, so a write that
+      // settles mid-sweep queues a fresh forced sweep instead of being
+      // silently dropped by the single-flight guard.
+      let pendingForcedRefresh = false;
+      let sweepStartedAt = 0;
+
+      // A mutation-triggered refresh bypasses the failure backoff (see
+      // refresh()): user actions are rare and deserve promptness. The shared
+      // hook queues the scan that notices the flag; the marker mechanism stays
+      // as backup and for actions performed in other tabs.
+      mutationCallbacks.push(() => {
+        forceRefresh = true;
+      });
+
+      // Forced-sweep trigger respecting the single-flight guard: a
+      // sweep already in flight cannot be trusted to have seen the
+      // demand, so the follow-up is queued instead and drained when
+      // that sweep commits (the tail of refresh()). Shared by the
+      // storage listener below and the ledger's suspect resweep; the
+      // write-settle trigger keeps its own guarded variant, which
+      // additionally checks sweep coverage via sweepStartedAt.
+      function triggerForcedSweep() {
+        if (refreshInFlight) {
+          pendingForcedRefresh = true;
+        } else {
+          forceRefresh = true;
+          queueRefresh();
+        }
+      }
+
+      // Cross-tab prompt trigger: another tab's marker bump (script
+      // quick-toggle via the script's own marker key, or the app's own
+      // trakt-marker:invalidate:* bumps on native actions; the exact
+      // app key names are unverified, observed live e.g. listed:show)
+      // sweeps this tab without waiting for a DOM-mutation scan, which
+      // an idle tab may never run. Storage events fire only in tabs
+      // that did not perform the write, so every matching event is
+      // foreign by construction (a null key, as from localStorage
+      // .clear(), fails the prefix test). The single debounced timer
+      // waits WRITE_SETTLE_MS before sweeping: the writer bumps the
+      // instant its POST resolves, and a zero-delay read could commit
+      // pre-write server state as fresh with no ledger entry here to
+      // correct it. The settle timer hands off to triggerForcedSweep
+      // (shared with the suspect resweep); the scan-driven
+      // markers.changed() check stays as catch-up for bumps that landed
+      // while no listener was alive.
+      // Registered on pageWindow (the real page window, the same
+      // surface the fetch hook patches): storage events dispatch on
+      // the page window, sandbox-wrapper forwarding is
+      // manager-dependent, and attaching there makes the page-context
+      // e2e build's listener path identical to the released sandboxed
+      // build.
+      let foreignBumpTimer = 0;
+      pageWindow.addEventListener('storage', e => {
+        if (!e.key || !markers.isMarkerKey(e.key)) return;
+        clearTimeout(foreignBumpTimer);
+        foreignBumpTimer = setTimeout(() => {
+          foreignBumpTimer = 0;
+          triggerForcedSweep();
+        }, WRITE_SETTLE_MS);
+      });
+
+      // Single-flight, atomic per category: a category's record is replaced only
+      // when every fetch it depends on succeeded; otherwise it keeps its stale
+      // record wholesale and the backoff gates the next attempt.
+      async function refresh() {
+        if (refreshInFlight) return;
+        // A mutation-triggered refresh bypasses the failure backoff: user actions
+        // are rare and deserve promptness. Ordinary staleness and the re-armed
+        // retry after a failed forced sweep still respect it.
+        if (!forceRefresh && Date.now() - lastFailureAt < RETRY_BACKOFF_MS) return;
+        const auth = readAuth();
+        if (!auth) {
+          warn('No Trakt access token in localStorage; fading stays on cached/empty data until login');
+          lastFailureAt = Date.now();
+          return;
+        }
+        const wasForced = forceRefresh || rearmedRefresh;
+        forceRefresh = false;
+        rearmedRefresh = false;
+        refreshInFlight = true;
+        sweepStartedAt = Date.now();
+        try {
+          const captured = markers.current();
+          const [shows, progress, movies, watchlist, listed] = await Promise.allSettled([
+            fetchers.fetchAll(auth, '/users/me/watched/shows?extended=full'),
+            fetchers.fetchWatchedProgress(auth),
+            fetchers.fetchAll(auth, '/users/me/watched/movies'),
+            fetchers.fetchAll(auth, '/users/me/watchlist'),
+            fetchers.fetchListedData(auth),
+          ]);
+          const now = Date.now();
+          let anyFailed = false;
+          let changed = false;
+
+          if (shows.status === 'fulfilled' && progress.status === 'fulfilled' && movies.status === 'fulfilled') {
+            const split = fetchers.splitWatchedShows(shows.value, progress.value);
+            store.commit('watched', { slugs: [...split.watched, ...fetchers.movieSlugs(movies.value)], fetchedAt: now });
+            store.commit('started', { slugs: split.started, fetchedAt: now });
+            changed = true;
+          } else {
+            anyFailed = true;
+            warn('Watched/started refresh failed; keeping stale data', shows.reason || progress.reason || movies.reason);
+          }
+
+          if (watchlist.status === 'fulfilled') {
+            store.commit('watchlisted', { slugs: watchlist.value.map(fetchers.itemSlug).filter(Boolean), fetchedAt: now });
+            changed = true;
+          } else {
+            anyFailed = true;
+            warn('Watchlist refresh failed; keeping stale data', watchlist.reason);
+          }
+
+          if (listed.status === 'fulfilled') {
+            const suspect = ledger.reconcile(listed.value.targets, now);
+            store.commit('listed', Object.assign({}, listed.value, { fetchedAt: now }));
+            changed = true;
+            if (suspect) ledger.scheduleSuspectResweep();
+          } else {
+            anyFailed = true;
+            warn('List-membership refresh failed; keeping stale data', listed.reason);
+          }
+
+          if (changed) {
+            store.persist();
+            store.rebuildSets();
+          }
+          markers.commitSnapshot(captured);
+          if (anyFailed) {
+            lastFailureAt = now;
+            if (wasForced) {
+              rearmedRefresh = true;
+            }
+          }
+          if (changed) queueScan();
+        } finally {
+          refreshInFlight = false;
+        }
+        if (pendingForcedRefresh) {
+          pendingForcedRefresh = false;
+          forceRefresh = true;
+          await refresh();
+        }
+      }
+
+      function queueRefresh() {
+        refresh().catch(e => {
+          warn('Refresh failed unexpectedly', e);
+          lastFailureAt = Date.now();
+        });
+      }
+
+      // Write-triggered sweep: waits a longer settle window than
+      // notifyMutation's (the server needs time to reflect the write before
+      // a refetch, or the sweep reads pre-write state and stamps it fresh),
+      // rides the pending flag when the in-flight sweep cannot be trusted to
+      // have seen the write, and bypasses the backoff via forceRefresh. A
+      // sweep counts as covering the write only when it started AFTER the
+      // settle window closed: one that started inside the window may still
+      // have fetched pre-write state (one click, one sweep otherwise), which
+      // with the widened window guarantees a post-settle sweep exists.
+      function queueWriteSettledSweep() {
+        const settledAt = Date.now();
+        setTimeout(() => {
+          if (refreshInFlight) {
+            if (sweepStartedAt < settledAt + WRITE_SETTLE_MS) pendingForcedRefresh = true;
+          } else {
+            forceRefresh = true;
+            queueRefresh();
+          }
+        }, WRITE_SETTLE_MS);
+      }
+
+      return {
+        queueRefresh,
+        triggerForcedSweep,
+        queueWriteSettledSweep,
+        forcedPending: () => forceRefresh || rearmedRefresh,
+      };
+    })();
+
+    // ---- Consumer surfaces --------------------------------------------
+
+    // The full staleness condition for membership data mirrors the fade
+    // scan's own refresh trigger: TTL age alone would miss app-driven
+    // changes (a native Manage-lists tick sets the mutation-forced flag;
+    // another tab's change lands via the invalidation markers), leaving
+    // toggle icons wrong for the full TTL on pages where the fade scan
+    // (and with it the scan-triggered refresh) is inactive.
+    function membershipStale() {
+      return sweep.forcedPending() || markers.changed() || store.categoryStale('listed');
+    }
+
+    quickLists.membershipState = () => {
+      if (!store.listed()) return 'absent';
+      return membershipStale() ? 'stale' : 'fresh';
+    };
+
+    // null strictly means "data exists but the name resolved to zero or
+    // multiple lists"; callers must gate on membershipState() !== 'absent'
+    // before consulting targets, so the two no-entry states stay distinct.
+    quickLists.getListTarget = name => {
+      const listed = store.listed();
+      const target = listed && listed.targets[name];
+      if (!target) return null;
+      return { id: target.id, has: slugKey => target.slugs.includes(slugKey) };
+    };
+
+    // A foreign value observed at bump time means another tab wrote since
+    // this tab's last bump, and the overwrite just erased the evidence:
+    // surrender the ledger (see bumpSelf for the full contract).
+    quickLists.bumpInvalidationMarker = () => {
+      if (markers.bumpSelf()) ledger.drop();
+    };
+
+    // Ledger writer and surrender for the toggles feature; see ledger.note
+    // for the ordering contract with bumpInvalidationMarker.
+    quickLists.noteConfirmedWrite = ledger.note;
+    quickLists.dropConfirmedWrites = ledger.drop;
+
+    // Write-triggered flavor defers to the sweep controller's settle
+    // machinery; menu-open flavor is staleness-gated and respects the
+    // backoff.
+    quickLists.refreshMembership = ({ writeTriggered = false } = {}) => {
+      if (writeTriggered) {
+        sweep.queueWriteSettledSweep();
+      } else if (membershipStale()) {
+        sweep.queueRefresh();
+      }
+    };
+
     // Optimistic patch, not a sweep: mutates the target in place,
     // rebuilds the derived sets so the quick-category fade flips in the
     // same frame as the toggle icon, persists WITHOUT touching fetchedAt
@@ -1028,12 +1098,12 @@
     // session heal), and queues a rescan. counts is no longer touched:
     // quick lists are carved out of it.
     quickLists.applyListToggle = (name, slugKey, add) => {
-      const listed = cache.listed;
+      const listed = store.listed();
       const target = listed && listed.targets[name];
       if (!target) return;
       if (!patchTargetMembership(target, slugKey, add)) return;
-      sets = buildSets(cache);
-      persistCache();
+      store.rebuildSets();
+      store.persist();
       queueScan();
     };
 
@@ -1042,15 +1112,22 @@
     // needsRefresh is the fade scan's sweep trigger: any category stale,
     // a forced or re-armed sweep pending, or foreign marker movement.
     return {
-      sets: () => sets,
-      listedCounts: () => (cache.listed ? cache.listed.counts : {}),
-      listedKeys: () => (cache.listed ? cache.listed.keys : []),
+      sets: store.sets,
+      listedCounts: () => {
+        const listed = store.listed();
+        return listed ? listed.counts : {};
+      },
+      listedKeys: () => {
+        const listed = store.listed();
+        return listed ? listed.keys : [];
+      },
       quickTargetKey: name => {
-        const target = cache.listed && cache.listed.targets[name];
+        const listed = store.listed();
+        const target = listed && listed.targets[name];
         return target ? target.key : null;
       },
-      needsRefresh: () => forceRefresh || rearmedRefresh || cacheStale() || markersChanged(),
-      queueRefresh,
+      needsRefresh: () => sweep.forcedPending() || store.cacheStale() || markers.changed(),
+      queueRefresh: sweep.queueRefresh,
     };
   })();
 

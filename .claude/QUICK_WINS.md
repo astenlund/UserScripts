@@ -20,22 +20,6 @@ keys -- never on line numbers, plan-phase ordinals, bullet positions,
 or temporal qualifiers ("new", "recent"): a precise locator that rots
 misleads harder than a coarse one that holds.
 
-## Membership engine
-
-- **Split the list-membership engine closure into sub-scopes.** The
-  `initListMembership` closure in trakt_improved.user.js spans
-  roughly 790 lines carrying five concerns: API sweep fetchers
-  (fetchAll/fetchPage/bustedGet and the busting latch), the
-  cache-and-sets store, the confirmed-write ledger and its
-  reconciliation, the cross-tab marker machinery, and the sweep
-  triggers (mutation hook, storage listener, triggerForcedSweep).
-  Confirmed as sprawl by the 1.29 revise-code loop; deferred there as
-  too large for an inline fix. Preferred shape: sibling sub-closures
-  or plain sections with narrow explicit interfaces, following the
-  shipped initFadeFilters closure-split precedent (archived in
-  QUICK_WINS_HISTORY.md). Land it next time the engine is touched
-  substantially, not as a standalone churn commit.
-
 ## History
 
 Implemented quick wins are archived in

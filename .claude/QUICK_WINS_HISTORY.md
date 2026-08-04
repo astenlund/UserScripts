@@ -118,3 +118,21 @@ not to resolve dependencies.
   'view' slug. Textbook instance of the extraction-audit rule:
   sibling duplication co-located with the named trigger stays
   invisible unless audited for explicitly.
+- **Split the list-membership engine closure into sub-scopes** (shipped
+  2026-08-04, commit a67ada5, Trakt Improved 1.30). The ~790-line
+  `initListMembership` closure now hosts five sibling sub-closures with
+  narrow explicit interfaces: `store` (cache records, derived sets,
+  persistence, staleness), `markers` (cross-tab invalidation snapshot
+  machinery including the self-bump), `fetchers` (API sweeps, busting
+  latch, slug shaping), `ledger` (confirmed-write reconciliation and
+  the suspect-retry ladder), and `sweep` (trigger flags, single-flight
+  refresh, mutation/storage triggers). The `quickLists` surface and the
+  fade read surface stay in the outer closure as pure composition;
+  `patchTargetMembership` remains an outer shared helper of the toggle
+  and the ledger. Pure structural refactor, no behavior change: the two
+  public surfaces are byte-compatible, and the one dependency cycle
+  (ledger's resweep timer calling `sweep.triggerForcedSweep()` while
+  `refresh()` calls `ledger.reconcile()`) is resolved by a late-bound
+  sibling reference that only runs post-init. Confirmed as sprawl by
+  the 1.29 revise-code loop; follows the initFadeFilters closure-split
+  precedent above.

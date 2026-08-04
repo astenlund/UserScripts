@@ -93,7 +93,7 @@ tab within ~6s with zero DOM interaction.
 
 ### Injected RT chip duplicates dead native tiles instead of replacing them
 
-Fixed 2026-08-04 in commit 57c6407 (Trakt Improved 1.31). Root cause
+Fixed 2026-08-04 in commit e013a0c (Trakt Improved 1.31). Root cause
 confirmed live on The Gentleman Thief (2026): dead RT tiles render as
 grayscale "-" placeholders whose anchor is a trakt-no-link self-link
 back to the title page, so both rewriteRtAnchors and the hasNativeRt

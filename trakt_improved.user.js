@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.30
+// @version      1.31
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1622,7 +1622,8 @@
   // ---------------------------------------------------------------------
   // Feature: external links
   // Replaces unreliable native Rotten Tomatoes links with deterministic
-  // direct links (Wikidata bridges IMDb id to RT path) and adds a Letterboxd
+  // direct links (Wikidata bridges IMDb id to RT path), takes over the dead
+  // grayscale RT placeholder tiles as live links, and adds a Letterboxd
   // chip on movie pages, with title-search fallback throughout.
   // ---------------------------------------------------------------------
 
@@ -1643,12 +1644,16 @@
     const CACHE_MAX_ENTRIES = 500;
     const RT_PATH_PATTERN = /^(m|tv)\/[\w-]+$/;
 
+    // The app's row CSS renders every tile icon at height 14 with width from
+    // the svg's attribute aspect ratio, so the viewBoxes are cropped tight to
+    // the artwork: padding inside the viewBox would shrink the drawing
+    // relative to the native icons, which fill theirs edge to edge.
     const ICONS = {
-      rt: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24">'
+      rt: '<svg xmlns="http://www.w3.org/2000/svg" width="17" height="19.6" viewBox="3.5 2.4 17 19.6">'
         + '<circle cx="12" cy="13.5" r="8.5" fill="#fa320a"/>'
         + '<path d="M12 6c-.4-1.8-1.8-3.2-3.7-3.6 1 .8 1.6 1.8 1.8 3-1.4-1-3.2-1.3-4.8-.7 1.3.4 2.4 1.2 3.1 2.3 1.2-.7 2.4-1 3.6-1z" fill="#00912d"/>'
         + '</svg>',
-      lb: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24">'
+      lb: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="11" viewBox="1 6.5 22 11">'
         + '<circle cx="6.5" cy="12" r="5.5" fill="#ff8000"/>'
         + '<circle cx="17.5" cy="12" r="5.5" fill="#40bcf4"/>'
         + '<circle cx="12" cy="12" r="5.5" fill="#00e054"/>'
@@ -1835,6 +1840,38 @@
       }
     }
 
+    // Dead native RT tiles are placeholders the app renders when it has no
+    // score: a "-" value, a trakt-no-link anchor pointing back at the title
+    // page, and a grayscaled icon. Their hrefs never mention rottentomatoes,
+    // so rewriteRtAnchors and the native-RT guard in scan are blind to them;
+    // the icon viewBoxes (critic tomato and audience popcorn) identify them
+    // instead. Takeover turns each into a live link with native-live-tile
+    // markup: repointed at the RT URL, unlocked, recolored. The grey comes
+    // from two stacked sources, both of which must go: an inline grayscale
+    // filter on the svg, and an app rule keyed on the item NOT having
+    // has-valid-rating (it lives in a cross-origin sheet, so it is invisible
+    // to cssRules walks). All writes are class/attribute/style-level, so the
+    // body observer does not refire, and Svelte re-renders that restore the
+    // dead form are simply re-taken on the next scan. Scope is the summary
+    // row only, deliberately: whether the ratings drawer ever renders dead
+    // tiles is unverified, so the drawer keeps rewrite-only treatment.
+    const RT_TILE_VIEWBOXES = new Set(['0 0 145 140', '0 0 80 80']);
+
+    function takeOverDeadRtTiles(row, url) {
+      for (const item of row.querySelectorAll(`rating:not(.${CHIP_CLASS}) .rating-item:not(.has-valid-rating)`)) {
+        const svg = item.querySelector('svg');
+        const anchor = item.closest('a');
+        if (!svg || !anchor || !RT_TILE_VIEWBOXES.has(svg.getAttribute('viewBox'))) continue;
+        anchor.classList.remove('trakt-no-link');
+        anchor.classList.add('trakt-link');
+        if (anchor.getAttribute('target') !== '_blank') anchor.target = '_blank';
+        if (anchor.getAttribute('rel') !== 'noopener') anchor.rel = 'noopener';
+        if (anchor.href !== url) anchor.href = url;
+        if (svg.style.filter) svg.style.filter = '';
+        item.classList.add('has-valid-rating');
+      }
+    }
+
     // Chips clone a native tile so the app's Svelte-scoped styles keep applying;
     // the score block is dropped (a search link has no rating to show) and the
     // icon swapped. Injected nodes are not in Svelte's virtual DOM, so marker
@@ -1905,8 +1942,10 @@
       rewriteRtAnchors(rt);
       const templateTile = row.querySelector(`rating:not(.${CHIP_CLASS})`);
       if (!templateTile) return;
-      // A rewritten native RT tile already shows the score and links right,
-      // so the icon-only chip is only for pages missing RT entirely.
+      takeOverDeadRtTiles(row, rt);
+      // A rewritten or taken-over native RT tile already links right, so the
+      // icon-only chip is a legacy fallback for rows with no RT tiles at all
+      // (current app markup always renders the pair, dead or alive).
       const hasNativeRt = !!templateTile.parentElement.querySelector(`rating:not(.${CHIP_CLASS}) ${RT_HREF_MATCH}`);
       if (hasNativeRt) {
         removeChip(row, 'rt');

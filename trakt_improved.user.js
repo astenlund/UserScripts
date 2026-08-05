@@ -1800,6 +1800,59 @@
       }
     }
 
+    // Case-fold; strip diacritics (NFD, drop combining marks); delete
+    // apostrophes (ASCII, right single quote, modifier letter); every other
+    // non-alphanumeric becomes a space; collapse; drop one leading English
+    // article. Deleting apostrophes (rather than spacing them) keeps
+    // "Ocean's" equal to "Oceans" across the two sites' encodings.
+    function normalizeTitle(title) {
+      return title
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .replace(/['\u2019\u02BC]/g, '')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^(?:the|a|an) /, '');
+    }
+
+    // Titles agree on normalized equality, or when the longer raw title
+    // extends the shorter at a subtitle separator (colon, opening
+    // parenthesis, or space-surrounded dash) whose prefix normalizes equal
+    // to the shorter title: "Blade Runner: The Final Cut" agrees with
+    // "Blade Runner" while "Up in the Air" does not agree with "Up". An
+    // empty normalized side or a null Trakt title makes the signal
+    // unavailable rather than a disagreement.
+    function titleSignal(traktTitle, rtName) {
+      if (typeof traktTitle !== 'string' || !traktTitle) return 'unavailable';
+      const normTrakt = normalizeTitle(traktTitle);
+      const normRt = normalizeTitle(rtName);
+      if (!normTrakt || !normRt) return 'unavailable';
+      if (normTrakt === normRt) return 'agree';
+      const [shortRaw, longRaw] = traktTitle.length <= rtName.length
+        ? [traktTitle, rtName]
+        : [rtName, traktTitle];
+      const shortNorm = shortRaw === traktTitle ? normTrakt : normRt;
+      for (const sep of longRaw.matchAll(/:|\(| [-\u2010\u2013\u2014] /g)) {
+        if (normalizeTitle(longRaw.slice(0, sep.index)) === shortNorm) return 'agree';
+      }
+      return 'disagree';
+    }
+
+    // The +-1 tolerance absorbs festival-vs-wide-release boundary years.
+    function yearSignal(traktYear, rtYear) {
+      return Math.abs(traktYear - rtYear) <= 1 ? 'agree' : 'disagree';
+    }
+
+    // Demotion requires both independent signals to point at a different
+    // work; any intermediate combination is uncertain, never destructive.
+    function matchVerdict(years, titles) {
+      if (years === 'agree' && titles === 'agree') return 'match';
+      if (years === 'disagree' && titles === 'disagree') return 'mismatch';
+      return 'uncertain';
+    }
+
     // The app's canonical ids for the title, riding along on its own OAuth
     // token; these beat scraping the page's IMDb tile, which shares provenance
     // with the unreliable native RT links.

@@ -1853,6 +1853,49 @@
       return 'uncertain';
     }
 
+    // Maps the two-signal rule onto cache fields. Demotion (rtPath: null)
+    // happens only on not-found or when both signals disagree; parse-failure,
+    // error, and a missing Trakt year yield unknown (rtVerified: false, link
+    // kept: a failed check is not a failed verification). rtTitle/rtYear are
+    // stored exactly on uncertain verdicts (the click-time confirm slice's
+    // inputs); rtScores exactly on match (resolution-time score storage is
+    // match-only). Never throws: fetchRtPage is four-state, so the caller's
+    // catch (and its failure backoff) stays reserved for Trakt and Wikidata
+    // failures.
+    async function verifyRtPath(rtPath, traktTitle, traktYear) {
+      const blank = { rtVerified: false, rtTitle: null, rtYear: null, rtScores: null };
+      if (!rtPath) {
+        return { rtPath: null, ...blank };
+      }
+      const fetchStartedAt = Date.now();
+      const result = await fetchRtPage(rtPath);
+      if (result.status === 'not-found') {
+        warn(`RT link demoted (not-found): ${rtPath}; trakt "${traktTitle}" (${traktYear}) vs RT null (null)`);
+        return { rtPath: null, ...blank };
+      }
+      if (result.status !== 'ok' || typeof traktYear !== 'number') {
+        return { rtPath, ...blank };
+      }
+      const years = yearSignal(traktYear, result.data.year);
+      const titles = titleSignal(traktTitle, result.data.name);
+      const verdict = matchVerdict(years, titles);
+      if (verdict === 'match') {
+        return {
+          rtPath,
+          rtVerified: 'auto',
+          rtTitle: null,
+          rtYear: null,
+          rtScores: { critics: result.data.critics, audience: result.data.audience, fetchedAt: fetchStartedAt },
+        };
+      }
+      if (verdict === 'mismatch') {
+        warn(`RT link demoted (both-disagree): ${rtPath}; trakt "${traktTitle}" (${traktYear}) vs RT "${result.data.name}" (${result.data.year})`);
+        return { rtPath: null, ...blank };
+      }
+      warn(`RT link uncertain: trakt "${traktTitle}" (${traktYear}) vs RT "${result.data.name}" (${result.data.year})`);
+      return { rtPath, rtVerified: 'uncertain', rtTitle: result.data.name, rtYear: result.data.year, rtScores: null };
+    }
+
     // The app's canonical ids for the title, riding along on its own OAuth
     // token; these beat scraping the page's IMDb tile, which shares provenance
     // with the unreliable native RT links.
@@ -1914,7 +1957,8 @@
       (async () => {
         const ids = await fetchTraktIds(auth, type, slug);
         const rtPath = ids.imdb ? await fetchRtPath(ids.imdb) : null;
-        cachePut(key, { imdb: ids.imdb, tmdb: ids.tmdb, rtPath, fetchedAt: Date.now() });
+        const verification = await verifyRtPath(rtPath, ids.title, ids.year);
+        cachePut(key, { imdb: ids.imdb, tmdb: ids.tmdb, ...verification, fetchedAt: Date.now() });
         queueScan();
       })().catch(e => {
         backoff.record(key);

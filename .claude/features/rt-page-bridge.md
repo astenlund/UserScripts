@@ -546,9 +546,16 @@ driven explicitly through the window handle, which exposes
 - ~~`tv/` page shape~~ Resolved 2026-08-05: probed, first-aired
   `dateCreated` semantics confirmed; record in `## Feasibility` and
   the tv probe bullet in `## Verification plan (MVP)`.
-- Whether the audience "-" tile should show the popcorn score type
-  RT displays by default (`ALL`) or the verified-audience variant;
-  cosmetic, decide at implementation.
+- ~~Whether the audience "-" tile should show the popcorn score type
+  RT displays by default (`ALL`) or the verified-audience variant~~
+  Resolved 2026-08-05 (user ruling): the tiles must show the same
+  numbers as the critics-score and audience-score slots on the RT
+  page itself; display parity with RT is the rule, not a fixed
+  variant choice. At implementation, confirm the parsed scorecard
+  fields (`criticsScore.score`, `audienceScore.score`) equal the
+  numbers RT renders in those slots on a live page; if RT's
+  displayed number comes from a different field or variant, parse
+  the field that matches the display.
 
 ## Hardening
 

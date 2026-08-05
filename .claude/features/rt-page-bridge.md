@@ -484,11 +484,15 @@ driven explicitly through the window handle, which exposes
   JSON-LD name/year and scorecard scores parse. The page-shape half
   was re-confirmed 2026-08-05 in a rendered browser (`m/inception`:
   Movie / `dateCreated: 2010-07-16` / scores 86/91); the remaining
-  question is only whether the extension transport survives a
-  Cloudflare-fronted fetch; the injected e2e build has no GM API,
-  so this settles organically once the installed 1.32 resolves a
-  movie page (direct RT link = pass; RT warns in console = fail)
-  (live-claim: deferred 2026-08-05)
+  question was whether the extension transport survives a
+  Cloudflare-fronted fetch. Settled by the installed 1.32 in the
+  field: `movie:we-re-all-gonna-die-2025` resolved to
+  `rtVerified: 'auto'` with `rtScores: { critics: null,
+  audience: 87 }`, which requires a successful real
+  GM_xmlhttpRequest fetch, a parseable page, and a matching
+  comparison; the partially-scored page also exercised the
+  optional-scores contract and the apostrophe normalization
+  (live-claim: probed 2026-08-05)
 - Live shape, tv page: a real fetch of a known `tv/<slug>` path
   yields a parseable name and year under the same parser; the
   scorecard's presence and shape are recorded (the hydration
@@ -516,10 +520,18 @@ driven explicitly through the window handle, which exposes
   wrong-linking title if one is supplied at run time; otherwise
   construct the case by pointing a real title's resolution at a
   deliberately wrong live RT page (real transport, wrong path) and
-  assert the comparison rejects it. The comparison half was
-  e2e-verified 2026-08-05 with real page data through stubs; the
-  real-transport form is deferred to the installed 1.32 alongside
-  the movie-page claim above (live-claim: deferred 2026-08-05)
+  assert the comparison rejects it. Probed 2026-08-05 with the
+  field specimen `movie:dead-mail-2024` (wrong native RT link on
+  Trakt): Wikidata carries the correct entity (Q124852877) but no
+  P1258, so the bridge resolved no path and the search fallback
+  replaced the wrong link -- the bad link never reaches the user,
+  though via the no-path branch rather than a demotion verdict.
+  The demotion machinery itself was verified with real RT page
+  data through stubs, and the real transport plus real comparison
+  were confirmed by the movie-page probe above; a field specimen
+  of a wrongly-BRIDGED path (wrong P1258) remains unobserved and
+  will exercise the demotion path organically when one occurs
+  (live-claim: probed 2026-08-05)
 
 ## Open questions
 
@@ -545,3 +557,4 @@ driven explicitly through the window handle, which exposes
 - revise-spec refreshed 2026-08-05 20:49 at 535ba3f, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 3e6e322f (e2e stub-seam correction)
 - revise-spec refreshed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc (live-claim deferral dispositions)
 - handover completed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc
+- revise-spec refreshed 2026-08-05 23:07 at 56386fd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: a6ec064f (live-claim probes settled in the field)

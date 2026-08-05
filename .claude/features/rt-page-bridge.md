@@ -432,7 +432,13 @@ stubs `fetchRtPage`'s transport where a scenario needs a controlled
 page, and stubs `fetchTraktIds`' response where a band needs a
 controlled Trakt-side input (the Trakt-year-null and
 Trakt-title-null bands); the live-shape probes use the real
-transports.
+transports. The injected build excludes the script's scan
+bootstrap: an injection-time scan would fire before the stubs are
+assigned and send real RT/Wikidata traffic. Scans are instead
+driven explicitly through the window handle, which exposes
+`queueScan` alongside the eviction and backoff surfaces
+(post-resolution scans still fire naturally via `resolveIds`' own
+`queueScan()` call).
 
 - Verdict matrix, stub-driven: drive `resolveIds` for one title per
   band (both-agree; year-only disagree; title-only disagree;
@@ -527,3 +533,4 @@ transports.
 ## Hardening
 
 - revise-spec graduated 2026-08-05 19:17 at f57af45, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: f21c682d
+- revise-spec refreshed 2026-08-05 19:48 at c497391, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 18b1d145 (spec reconciliation)

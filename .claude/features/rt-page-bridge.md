@@ -370,7 +370,18 @@ untouched:
   navigation under the shipped takeover: the end state self-heals,
   since a surviving RT href is re-synced by rewriteRtAnchors and a
   restored dead form is re-taken. Text survival cannot be probed
-  until scores exist to write, hence the two guards.) Hydration runs
+  until scores exist to write, hence the two guards. A related
+  non-hole, settled by the same probe: the takeover selector's
+  `:not(.has-valid-rating)` self-exclusion does not strand reused
+  nodes, because the observed re-take of a restored dead form means
+  Svelte's repatch resets the class; a class that survives reuse is
+  the app's own statement that the tile is natively valid, which is
+  the correct exclusion. Accepted residual: should a repatch path
+  ever leave a stale `has-valid-rating` on a genuinely dead tile,
+  that tile degrades to an unhydrated "-" and self-corrects on the
+  next app repatch; it is never blanked or overwritten, since the
+  takeover extension and the hydration render both run only on
+  tiles the takeover loop actually processed.) Hydration runs
   on every scan pass over the tracked set, after the takeover call
   in the same pass: takeover writes are attribute-level and never
   queue a follow-up scan, so a render placed before the takeover
@@ -380,8 +391,12 @@ untouched:
   tracker, even when their native score disagrees with RT's. A
   same-title Svelte re-render that restores the dead "-" form is
   re-taken and re-tracked on the next scan. The value write targets
-  the `.rating-value p` text and compares before writing
-  (idempotence); text writes are childList mutations, so an
+  the `.rating-value p` text (live-probed markup: `.rating-item >
+  .rating-info > .rating-value > p`, an svg sibling preceding
+  `.rating-info`; see `## Verification plan (score hydration)`) and
+  compares before writing (idempotence); live tiles render with the
+  native `%` suffix, so the render writes `<score>%` and the reset
+  writes "-". Text writes are childList mutations, so an
   unconditional write would re-trigger the shared body observer
   every frame, exactly the loop the idempotence rule at the top of
   CLAUDE.md exists to prevent. **Score source, refetch, and
@@ -533,6 +548,55 @@ driven explicitly through the window handle, which exposes
   will exercise the demotion path organically when one occurs
   (live-claim: probed 2026-08-05)
 
+## Verification plan (score hydration)
+
+Same e2e regime as the MVP plan: injected namespaced build (renamed
+version-stamped keys, class/style constants, marker attributes),
+scan bootstrap excluded, every remote transport stubbed where a band
+needs controlled input, window handle exposing `queueScan`, the
+tracked-tile surface, and the hydration entry point; scans driven
+explicitly.
+
+- Tile markup, live-probed 2026-08-05 (movie summary page,
+  `movies/inception-2010`): every rating tile, RT tiles included,
+  is `.rating-item > .rating-info > .rating-value > p` with an svg
+  sibling preceding `.rating-info`, and live tiles render the value
+  with a `%` suffix ("87%"), so `.rating-value p` is the write
+  target and the render writes `<score>%`
+  (live-claim: probed 2026-08-05)
+- Display parity, live-probed 2026-08-05 (`m/inception`): the
+  rendered critics-score slot ("86%") equals the scorecard blob's
+  top-level `criticsScore.score` ("86"), and the rendered
+  audience-score slot ("91%", Popcornmeter) equals top-level
+  `audienceScore.score` ("91"), which equals the blob's
+  `audienceAll` variant; `audienceVerified` differs ("86"). The
+  shipped parser reads the top-level fields, so the resolved
+  display-parity ruling holds with no parser change
+  (live-claim: probed 2026-08-05)
+- Gate matrix, stub-driven, one band each; pass condition per band
+  is the asserted fetch count plus the cache and tile end state:
+  (a) tracked tile, non-null `rtPath`, `rtScores` null: exactly one
+  hydration fetch across repeated scans (in-flight dedup), the
+  completion writes integer scores with a numeric `fetchedAt` and
+  calls `queueScan`, and the tiles read `<critics>%` / `<audience>%`
+  on the next pass; (b) fresh stamp (younger than 24h): zero
+  fetches; (c) seeded stale stamp (older than 24h): exactly one
+  fetch; (d) `rtPath` null: zero fetches and both tiles reset to
+  "-"; (e) failure-stubbed fetch: `rtScores` written as
+  `{ critics: null, audience: null, fetchedAt }` with fetch-start
+  time, tile text left unchanged, and zero further fetches until
+  the stamp is re-aged.
+- Tracker behavior: takeover returns its processed tiles and the
+  tracker dedupes by node identity across passes; a disconnected
+  tile drops out on the next pass; a page-key change clears the
+  tracker and resets only script-written text (a tile seeded with
+  foreign text is left alone; a tile carrying the script's own last
+  write is reset to "-").
+- Observer-loop guard: with state unchanged, repeated driven scans
+  produce zero tile-text DOM writes (compare text and mutation
+  counts across N scans); the shared body observer must settle, not
+  requeue every frame.
+
 ## Open questions
 
 - GM_xmlhttpRequest against RT in the wild: the probe used curl from
@@ -551,11 +615,9 @@ driven explicitly through the window handle, which exposes
   Resolved 2026-08-05 (user ruling): the tiles must show the same
   numbers as the critics-score and audience-score slots on the RT
   page itself; display parity with RT is the rule, not a fixed
-  variant choice. At implementation, confirm the parsed scorecard
-  fields (`criticsScore.score`, `audienceScore.score`) equal the
-  numbers RT renders in those slots on a live page; if RT's
-  displayed number comes from a different field or variant, parse
-  the field that matches the display.
+  variant choice. Probed 2026-08-05: parity holds with the shipped
+  parser's top-level fields; see the display-parity bullet in
+  `## Verification plan (score hydration)`.
 
 ## Hardening
 

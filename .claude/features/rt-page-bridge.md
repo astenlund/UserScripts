@@ -431,7 +431,10 @@ localStorage reads, link state via anchor hrefs. The injected build
 stubs `fetchRtPage`'s transport where a scenario needs a controlled
 page, and stubs `fetchTraktIds`' response where a band needs a
 controlled Trakt-side input (the Trakt-year-null and
-Trakt-title-null bands); the live-shape probes use the real
+Trakt-title-null bands), and stubs `fetchRtPath` for every
+non-null-path band: the injected page context cannot reach Wikidata
+(page CSP plus no GM API), so an unstubbed resolution would fail
+before verification ever ran. The live-shape probes use the real
 transports. The injected build excludes the script's scan
 bootstrap: an injection-time scan would fire before the stubs are
 assigned and send real RT/Wikidata traffic. Scans are instead
@@ -534,3 +537,4 @@ driven explicitly through the window handle, which exposes
 
 - revise-spec graduated 2026-08-05 19:17 at f57af45, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: f21c682d
 - revise-spec refreshed 2026-08-05 19:48 at c497391, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 18b1d145 (spec reconciliation)
+- revise-spec refreshed 2026-08-05 20:49 at afeae53, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 3e6e322f (e2e stub-seam correction)

@@ -12,6 +12,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      www.wikidata.org
+// @connect      www.rottentomatoes.com
 // ==/UserScript==
 
 (function () {
@@ -1693,14 +1694,9 @@
       return response.json();
     }
 
-    // Wikidata is not on the app's connect-src CSP whitelist, so those calls
-    // go through GM_xmlhttpRequest (extension background, exempt from page
-    // CSP). The jsonFetch fallback covers managers without the API; under
-    // this app's CSP it will fail and degrade to title-search links.
-    function gmFetchJson(url) {
-      if (typeof GM_xmlhttpRequest !== 'function') {
-        return jsonFetch(url);
-      }
+    // Shared GM_xmlhttpRequest transport: handleLoad maps the response to
+    // the resolved value (throw to reject).
+    function gmXhr(url, handleLoad) {
       const hostname = new URL(url).hostname;
       return new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
@@ -1708,12 +1704,8 @@
           url,
           timeout: FETCH_TIMEOUT_MS,
           onload: r => {
-            if (r.status < 200 || r.status >= 300) {
-              reject(new Error(`HTTP ${r.status} from ${hostname}`));
-              return;
-            }
             try {
-              resolve(JSON.parse(r.responseText));
+              resolve(handleLoad(r, hostname));
             } catch (e) {
               reject(e);
             }
@@ -1722,6 +1714,90 @@
           onerror: () => reject(new Error(`Network error from ${hostname}`)),
         });
       });
+    }
+
+    // Wikidata is not on the app's connect-src CSP whitelist, so those calls
+    // go through GM_xmlhttpRequest (extension background, exempt from page
+    // CSP). The jsonFetch fallback covers managers without the API; under
+    // this app's CSP it will fail and degrade to title-search links.
+    function gmFetchJson(url) {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        return jsonFetch(url);
+      }
+      return gmXhr(url, (r, hostname) => {
+        if (r.status < 200 || r.status >= 300) {
+          throw new Error(`HTTP ${r.status} from ${hostname}`);
+        }
+        return JSON.parse(r.responseText);
+      });
+    }
+
+    // Text-body sibling of gmFetchJson. Resolves on any HTTP status (the
+    // caller classifies), rejects only on network failure or timeout.
+    function gmFetchText(url) {
+      return gmXhr(url, r => ({ status: r.status, text: r.responseText }));
+    }
+
+    function parseScore(html, field) {
+      const m = html.match(new RegExp(`"${field}":\\{[^}]*"score":"(\\d{1,3})"`));
+      if (!m) return null;
+      const score = Number(m[1]);
+      return score >= 0 && score <= 100 ? score : null;
+    }
+
+    // name and year are required for ok (the match rule must only ever
+    // compare two real values); scores are optional, null on score-less or
+    // unreleased titles.
+    function parseRtPage(html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      let name = null;
+      let year = null;
+      for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+        let data;
+        try {
+          data = JSON.parse(script.textContent);
+        } catch {
+          // Malformed ld+json block; keep looking.
+          continue;
+        }
+        if (
+          data &&
+          (data['@type'] === 'Movie' || data['@type'] === 'TVSeries') &&
+          typeof data.name === 'string' &&
+          data.name &&
+          typeof data.dateCreated === 'string'
+        ) {
+          const parsedYear = Number(data.dateCreated.slice(0, 4));
+          if (Number.isInteger(parsedYear) && parsedYear > 0) {
+            name = data.name;
+            year = parsedYear;
+            break;
+          }
+        }
+      }
+      if (name === null || year === null) return null;
+      const scoreScript = [...doc.querySelectorAll('script')].find(s => s.textContent.includes('criticsScore'));
+      const scoreText = scoreScript ? scoreScript.textContent : '';
+      return { name, year, critics: parseScore(scoreText, 'criticsScore'), audience: parseScore(scoreText, 'audienceScore') };
+    }
+
+    // Four-state result, never throws. A hard 404/410 after redirects is
+    // RT's definitive statement that the path is dead and demotes like a
+    // mismatch (same definitive-miss-vs-transient split as initListCounts'
+    // deleted-list tombstone). 403/429/5xx stay in error deliberately: they
+    // are what a bot wall returns, and a bot wall must never demote links.
+    async function fetchRtPage(rtPath) {
+      if (typeof GM_xmlhttpRequest !== 'function') return { status: 'error' };
+      try {
+        const r = await gmFetchText(`https://www.rottentomatoes.com/${rtPath}`);
+        if (r.status === 404 || r.status === 410) return { status: 'not-found' };
+        if (r.status < 200 || r.status >= 300) return { status: 'error' };
+        const data = parseRtPage(r.text);
+        return data ? { status: 'ok', data } : { status: 'parse-failure' };
+      } catch {
+        // Network failure or timeout; transient, must not demote.
+        return { status: 'error' };
+      }
     }
 
     // The app's canonical ids for the title, riding along on its own OAuth

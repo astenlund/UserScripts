@@ -485,8 +485,10 @@ driven explicitly through the window handle, which exposes
   was re-confirmed 2026-08-05 in a rendered browser (`m/inception`:
   Movie / `dateCreated: 2010-07-16` / scores 86/91); the remaining
   question is only whether the extension transport survives a
-  Cloudflare-fronted fetch, settled at e2e
-  (live-claim: provisional)
+  Cloudflare-fronted fetch; the injected e2e build has no GM API,
+  so this settles organically once the installed 1.32 resolves a
+  movie page (direct RT link = pass; RT warns in console = fail)
+  (live-claim: deferred 2026-08-05)
 - Live shape, tv page: a real fetch of a known `tv/<slug>` path
   yields a parseable name and year under the same parser; the
   scorecard's presence and shape are recorded (the hydration
@@ -514,7 +516,10 @@ driven explicitly through the window handle, which exposes
   wrong-linking title if one is supplied at run time; otherwise
   construct the case by pointing a real title's resolution at a
   deliberately wrong live RT page (real transport, wrong path) and
-  assert the comparison rejects it (live-claim: provisional)
+  assert the comparison rejects it. The comparison half was
+  e2e-verified 2026-08-05 with real page data through stubs; the
+  real-transport form is deferred to the installed 1.32 alongside
+  the movie-page claim above (live-claim: deferred 2026-08-05)
 
 ## Open questions
 
@@ -538,3 +543,5 @@ driven explicitly through the window handle, which exposes
 - revise-spec graduated 2026-08-05 19:17 at f57af45, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: f21c682d
 - revise-spec refreshed 2026-08-05 19:48 at c497391, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 18b1d145 (spec reconciliation)
 - revise-spec refreshed 2026-08-05 20:49 at afeae53, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 3e6e322f (e2e stub-seam correction)
+- revise-spec refreshed 2026-08-05 21:59 at b801452, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc (live-claim deferral dispositions)
+- handover completed 2026-08-05 21:59 at b801452, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc

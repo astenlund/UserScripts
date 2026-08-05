@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.31
+// @version      1.32
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1638,7 +1638,7 @@
     const REWRITE_SCOPES = `${ROW_SELECTOR}, .trakt-ratings-drawer-content`;
     const RT_HREF_MATCH = 'a[href*="rottentomatoes."]';
     const CACHE_KEY = 'trakt-external-links-cache';
-    const CACHE_VERSION = 1;
+    const CACHE_VERSION = 2;
     // The TTL also schedules retries for titles Wikidata has no RT path for
     // yet; id mappings drift rarely, so a month keeps lookups near zero.
     const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -1661,8 +1661,13 @@
         + '</svg>',
     };
 
-    // Cache entry per "<type>:<slug>": { imdb, tmdb, rtPath, fetchedAt }, under
-    // a version stamp so a format change forces a refetch.
+    // Cache entry per "<type>:<slug>": { imdb, tmdb, rtPath, rtVerified,
+    // rtTitle, rtYear, rtScores, fetchedAt }, under a version stamp so a
+    // format change forces a refetch. rtVerified is 'auto' | 'uncertain' |
+    // false ('user' reserved for click-time confirm); rtTitle/rtYear are
+    // non-null exactly on uncertain verdicts; rtScores is
+    // { critics, audience, fetchedAt } (integers 0-100 or null) exactly on
+    // match verdicts.
     function loadCache() {
       const raw = readJson(CACHE_KEY);
       const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;

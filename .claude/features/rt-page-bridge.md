@@ -1,5 +1,7 @@
 # RT page bridge: link verification and score hydration
 
+Status: signed off 2026-08-05 18:05, content: 0c7c810e
+
 Fetch the resolved Rotten Tomatoes page itself and use it two ways:
 confirm that the RT link the script serves actually belongs to the
 title being viewed (demoting mismatches to a title search), and fill
@@ -66,23 +68,45 @@ re-verification happens inside a later `resolveIds` run, which
 re-fetches the Trakt ids anyway, so a cached year would be a
 write-only field.
 
-Match rule (year is the primary signal, title secondary):
+Match rule (year gates first, title second; three-tier verdict):
 
 - Year differing by more than 1 from Trakt's year: **mismatch**.
-  Wrong-entity bridges (the observed failure) essentially always get
-  the year wrong; the +-1 tolerance absorbs festival-vs-wide-release
-  boundary years.
-- Year within tolerance: **match**, even when the titles differ.
-  Titles legitimately diverge across the two sites (alternate and
-  localized titles), so title-only mismatch must not demote; log a
-  `warn` with both titles instead so field reports can firm the rule
-  up later.
+  Wrong-entity bridges usually get the year wrong; the +-1 tolerance
+  absorbs festival-vs-wide-release boundary years.
+- Year within tolerance AND normalized titles agree: **match**.
+  Normalization: case-fold, strip diacritics and punctuation,
+  collapse whitespace, drop one leading English article (the/a/an);
+  agreement is normalized equality or one normalized title being a
+  prefix of the other (absorbs subtitle and edition variants).
+- Year within tolerance but titles disagree after normalization:
+  **uncertain**. Same-year wrong-title resolutions are field-observed
+  (2026-08-05), so year alone cannot confirm; but titles also
+  legitimately diverge across the two sites (alternate and localized
+  titles), so title disagreement alone must not demote either. The
+  entry keeps the direct link (status quo) and records the verdict;
+  the click-time confirm slice turns it into a one-time user
+  question. Log a `warn` with both titles.
 
-Verdict handling in the cache entry:
+Verdict handling in the cache entry. `rtVerified` is a small enum:
+`'auto'` (machine-confirmed match), `'uncertain'` (year ok, titles
+disagree), `false` (unverified/unknown); `'user'` is reserved for
+the click-time confirm slice.
 
-- match: store `rtPath` with `rtVerified: true`, plus `rtScores`
+- match: store `rtPath` with `rtVerified: 'auto'`, plus `rtScores`
   parsed from the page already in hand (the opportunistic storage
-  slice 2 renders).
+  the score-hydration slice renders).
+- uncertain: store `rtPath` with `rtVerified: 'uncertain'`,
+  `rtScores: null` (the page in hand may belong to a different
+  same-year title, so resolution-time score storage stays
+  match-only), and `rtTitle`/`rtYear` from the parsed page: the
+  click-time confirm slice needs the RT-side identity at click time,
+  and storing it now means one CACHE_VERSION bump total instead of a
+  second wipe when that slice lands. The direct link keeps being
+  served; the score hydration slice's verdict-agnostic gate treats
+  the entry like an unknown one (its scores follow the served
+  link's fate). The verdict is re-derived at the next TTL refetch
+  like any other; carry-forward of user rulings across refetches
+  belongs to the click-time confirm slice.
 - mismatch: store `rtPath: null` (the search fallback takes over
   everywhere downstream, which is the requested behavior) and
   `rtScores: null`: the page in hand belongs to the wrong title, so
@@ -97,11 +121,11 @@ Verdict handling in the cache entry:
   `rtVerified: false` are re-verified the next time `resolveIds` runs
   for that key, which in practice means the next TTL refetch (~30
   days), since scan only calls `resolveIds` on cache miss or expiry.
-  That cadence is deliberate: a scan-side gate on
-  `rtVerified === false` would re-run the whole Trakt + Wikidata + RT
-  chain unthrottled (scan runs per animation frame and nothing in
-  this path records into the failure backoff), so do not "improve"
-  the wording into that.
+  That cadence is deliberate: a scan-side gate on unverified entries
+  would re-run the whole Trakt + Wikidata + RT chain unthrottled
+  (scan runs per animation frame and nothing in this path records
+  into the failure backoff), so do not "improve" the wording into
+  that.
 
 A Trakt-side `year` that is null or absent also yields **unknown**
 (store the path, `rtVerified: false`, `rtScores: null` like the
@@ -114,9 +138,9 @@ cost of one deduped hydration fetch of the same page on the first
 tracked scan. Hydration-side storage is, by contrast, deliberately
 verdict-agnostic: an unknown-verdict entry's direct link is already
 being served, and its scores follow the served link's fate. Do not
-"harden" the hydration gate with an `rtVerified === true` condition;
-that would starve every unknown-verdict title of scores until the
-~30-day TTL.
+"harden" the hydration gate with an `rtVerified === 'auto'`
+condition; that would starve every unknown- and uncertain-verdict
+title of scores until the ~30-day TTL.
 
 Entries whose `rtPath` is null (mismatch demotion above, or the
 pre-existing Wikidata-has-no-path case) store `rtVerified: false`:
@@ -128,14 +152,18 @@ on `rtPath` alone), so any fixed value works, and false keeps the
 
 The entry under `trakt-external-links-cache` grows from
 `{ imdb, tmdb, rtPath, fetchedAt }` to
-`{ imdb, tmdb, rtPath, rtVerified, rtScores, fetchedAt }` where
-`rtScores` is `{ critics, audience, fetchedAt }` or null. Every
+`{ imdb, tmdb, rtPath, rtVerified, rtTitle, rtYear, rtScores,
+fetchedAt }` where `rtScores` is `{ critics, audience, fetchedAt }`
+or null, and `rtTitle`/`rtYear` are non-null only on uncertain
+verdicts (the confirm slice's click-time inputs; every other verdict
+stores null for both). Every
 consumer of the entry shape, including the ones this change leaves
 untouched:
 
 - `loadCache` / `CACHE_VERSION`: bump the version to 2; old entries
   are discarded wholesale and refetched (the stamp exists for exactly
-  this).
+  this). The file has three same-named `CACHE_VERSION` constants in
+  separate IIFEs; the one to bump is the `initExternalLinks` copy.
 - The entry-shape comment above `loadCache` (documents the shape
   verbatim): update it to the widened shape or it rots silently.
 - `cacheGet`: unchanged (shape-agnostic beyond `fetchedAt`).
@@ -148,8 +176,9 @@ untouched:
 - `lbUrl`: unchanged (`imdb` / `tmdb` untouched).
 - `scan`: gains the hydration call (slice 2); TTL-refresh logic
   unchanged.
-- The e2e bundle build (`.tmp/build-tel2-e2e.mjs`) shares the cache
-  key with the installed copy on the assumption of identical
+- The e2e bundle build (a `.tmp/` build script, regenerated per e2e
+  session since `.tmp/` is ephemeral scratch) shares the cache key
+  with the installed copy on the assumption of identical
   CACHE_VERSION; after the bump, a stale rebuilt bundle running
   beside a newer installed copy would ping-pong the cache. Rebuild
   the bundle from the same source revision before any e2e run (the
@@ -158,8 +187,31 @@ untouched:
 ## Slices
 
 - **MVP: link verification.** The fix requested for wrong RT links:
-  verify at resolution time, demote mismatches to search. Ships
-  without touching tile rendering.
+  verify at resolution time under the three-tier match rule (year
+  gate, then normalized-title gate), demote year mismatches to
+  search, record same-year title disagreements as `uncertain` for
+  the click-time confirm slice. Ships without touching tile
+  rendering; uncertain links stay direct and just log.
+- **Continuation: click-time confirm.** Turns the MVP's `uncertain`
+  verdict into a one-time question asked only when the wrongness
+  could bite: a plain left-click on an uncertain RT anchor is
+  intercepted (modified clicks -- ctrl, middle -- pass through with
+  the direct link; hijacking new-tab intents is hostile and the
+  next plain click still asks) and a small popup, reusing the
+  script's existing popup machinery, shows the RT page's title and
+  year against the viewed title and year with two choices: open
+  (writes `rtVerified: 'user'`; this and future clicks go direct)
+  or not-it (demotes: `rtPath: null`, search fallback everywhere,
+  and opens the search now). The popup reads the RT-side identity
+  from the `rtTitle`/`rtYear` fields the MVP already stores on
+  uncertain verdicts, so no fetch happens at click time. A TTL
+  refetch that resolves the same `rtPath` the user already
+  ruled on carries the user verdict forward instead of re-deriving
+  `uncertain`; a changed path is new information and re-enters the
+  normal verdict flow. Open question, deliberately undesigned:
+  dismissal behavior (Esc / click-away -- no navigation and re-ask
+  next click, vs fall through to the direct link); decide when this
+  slice is designed in earnest.
 - **Continuation: score hydration.** Fill the "-" on taken-over dead
   RT tiles from `rtScores` (critic score into the tomato tile,
   audience into the popcorn tile). **Discriminator:** after takeover,
@@ -210,8 +262,8 @@ untouched:
   in hand, so `resolveIds` stores `rtScores` at resolution time on
   match verdicts (see verdict handling; a rejected page's scores are
   never cached, failed or misparsed fetches have nothing to
-  contribute, and unknown-verdict entries hydrate through the gate
-  below instead) and the fresh-resolution path hydrates without a
+  contribute, and unknown- and uncertain-verdict entries hydrate through
+  the gate below instead) and the fresh-resolution path hydrates without a
   second fetch. The hydration-side refetch fires when all three
   hold: the tracked set is nonempty; the entry's `rtPath` is
   non-null (a null path means demoted-to-search or

@@ -180,20 +180,27 @@ line in `FEATURES.md` / `BUGS.md` to drop now-satisfied references.
 Fetch the resolved Rotten Tomatoes page (GM_xmlhttpRequest, new
 `@connect www.rottentomatoes.com`) and use it two ways: verify at
 resolution time that the Wikidata-bridged RT path actually matches
-the title (year primary with +-1 tolerance, title secondary and
-log-only; mismatch demotes the link to title search), and hydrate the
-"-" values on taken-over dead RT tiles with real critic/audience
-scores. Probed 2026-08-04: RT movie pages serve JSON-LD (name,
-dateCreated) plus a scorecard JSON (criticsScore/audienceScore) to a
-plain fetch. Cache entry widens (CACHE_VERSION bump); full consumer
-walk in the feature file.
+the title (three-tier verdict: year gate with +-1 tolerance, then
+normalized-title gate; year mismatch demotes to title search,
+same-year title disagreement records `uncertain` for a click-time
+confirm), and hydrate the "-" values on taken-over dead RT tiles
+with real critic/audience scores. Probed 2026-08-04: RT movie pages
+serve JSON-LD (name, dateCreated) plus a scorecard JSON
+(criticsScore/audienceScore) to a plain fetch. Cache entry widens
+(CACHE_VERSION bump); full consumer walk in the feature file.
 
 **Slices:**
 
-- **MVP -- link verification.** Verify rtPath in `resolveIds`, cache
-  the verdict as the (`rtPath`, `rtVerified`) pair plus, on match
-  only, `rtScores` from the same fetch, demote mismatches to search
-  links. No rendering changes.
+- **MVP -- link verification.** Verify rtPath in `resolveIds` under
+  the three-tier match rule, cache the verdict enum plus, on
+  auto-match only, `rtScores` from the same fetch (and RT title/year
+  on uncertain, feeding the confirm slice); demote year mismatches
+  to search links, keep uncertain links direct and logged. No
+  rendering changes.
+- **Click-time confirm.** One-time popup on plain left-click of an
+  uncertain RT anchor: open (user-verified) or not-it (demote to
+  search); user rulings carry forward across TTL refetches of the
+  same path.
 - **Score hydration.** Render tracked taken-over tiles' scores via a
   closure-state tile tracker (identity-deduped, isConnected-filtered,
   cleared on page-key change), 24h staleness refetch with in-flight

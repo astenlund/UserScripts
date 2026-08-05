@@ -542,6 +542,6 @@ driven explicitly through the window handle, which exposes
 
 - revise-spec graduated 2026-08-05 19:17 at f57af45, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: f21c682d
 - revise-spec refreshed 2026-08-05 19:48 at c497391, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 18b1d145 (spec reconciliation)
-- revise-spec refreshed 2026-08-05 20:49 at afeae53, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 3e6e322f (e2e stub-seam correction)
-- revise-spec refreshed 2026-08-05 21:59 at b801452, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc (live-claim deferral dispositions)
-- handover completed 2026-08-05 21:59 at b801452, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc
+- revise-spec refreshed 2026-08-05 20:49 at 535ba3f, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 3e6e322f (e2e stub-seam correction)
+- revise-spec refreshed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc (live-claim deferral dispositions)
+- handover completed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc

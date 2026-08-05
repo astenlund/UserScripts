@@ -50,7 +50,7 @@ One shared fetch-and-parse helper feeds both slices:
   text body; the page CSP never sees the request). Requires adding
   `@connect www.rottentomatoes.com` to the userscript header, which
   Tampermonkey grants without prompting because it is declared.
-- Parsing extracts `{ name, year, criticsScore, audienceScore }` from
+- Parsing extracts `{ name, year, critics, audience }` from
   the JSON-LD block and the scorecard blob. Required-field contract:
   `name` and `year` are required for `ok` (`year` as a number parsed
   from the JSON-LD date field's leading four digits); the score
@@ -284,7 +284,16 @@ untouched:
   only, `rtScores` from the same verification fetch. Future writers,
   by slice name: the click-time confirm slice writes `rtVerified`
   (and `rtPath`, on a not-it ruling) from user rulings; the
-  score-hydration slice's staleness refetch writes `rtScores`.
+  score-hydration slice's staleness refetch merge-writes `rtScores`
+  for entries of any verdict (and, on a not-found result, the full
+  five-field blank
+  `rtPath`/`rtVerified`/`rtTitle`/`rtYear`/`rtScores`). Once that
+  slice ships, `rtScores` is match-only at resolution time but
+  verdict-agnostic overall, and landing it must update the two
+  shipped comments that state the old invariants: the entry-shape
+  comment above `loadCache`, and the takeover pass's
+  "all writes are class/attribute/style-level" comment (the
+  normalization write breaks it).
 - `rtUrl`: unchanged (`rtPath` null still falls back to search).
 - `lbUrl`: unchanged (`imdb` / `tmdb` untouched).
 - `scan`: gains the hydration call (score-hydration slice);
@@ -348,24 +357,78 @@ untouched:
   write" cannot be answered by inspecting the row. Instead the
   feature tracks taken-over tiles in closure state:
   `takeOverDeadRtTiles` returns the tiles it processed this pass,
-  and a tracker accumulates them in a plain array deduped by node
-  identity (a WeakSet cannot be iterated, so it cannot serve here).
-  On every scan pass the tracker is re-filtered to `isConnected`
-  nodes (disconnected ones drop out, releasing them) and **cleared
+  and a tracker accumulates them in a Map keyed by tile node with
+  `{ lastWritten }` values: dedup by node identity is the Map's key
+  semantics, iteration is required for the per-pass sweep (a
+  WeakMap cannot be iterated, so it cannot serve here), and
+  `lastWritten` records the exact string the script last wrote into
+  that tile's value node (null until the first write). Accumulation
+  is insert-if-absent: re-taking an already-tracked node never
+  resets its record, so `lastWritten` survives same-title re-takes
+  (a clobbering `Map.set` would zero the write history that the
+  maintenance foreign-text drop and the takeover normalization both
+  key on); only a genuinely new node starts at `lastWritten: null`.
+  Each tile's kind -- `'critics'` for the tomato viewBox
+  `0 0 145 140`, `'audience'` for the popcorn viewBox `0 0 80 80`,
+  the same two viewBoxes the takeover matches (the shipped
+  `RT_TILE_VIEWBOXES` membership Set erases the kind, so the slice
+  derives it itself; the binding was captured from live markup
+  during the 1.31 takeover diagnosis, see BUGS_HISTORY.md's
+  dead-tile entry) -- is derived from the tile's CURRENT svg
+  viewBox at write time, never snapshotted at match time. This is
+  deliberate: Svelte node reuse means a tracked node's tile
+  identity can shift under an unchanged page key, and a match-time
+  snapshot would hydrate a repatched node from a stale kind
+  (swapped percentages, no loud failure); reading the current
+  viewBox at each write makes kind staleness structurally
+  impossible, so the design assumes nothing about node-to-kind
+  stability. Kind is what makes the render side-safe: without it a
+  tracked pair is two indistinguishable nodes; it also covers rows
+  where only one tile of the pair is dead (only that tile is
+  tracked and hydrated, from its own field). Each scan pass
+  runs the slice's steps in a fixed order: tracker maintenance
+  first, then the takeover call, then hydration. Maintenance
+  re-filters the tracker to `isConnected` nodes (disconnected ones
+  drop out, releasing them); drops, with no write, any tile whose
+  current trimmed value text is neither "-" nor its `lastWritten`
+  (foreign text means the app has repatched the tile with its own
+  live data -- typically a native score arriving late for a tile
+  taken while it showed the dead form -- and a reclaimed tile must
+  never be written again; dropping it before any writer runs is
+  what makes the pass's writes authorship-safe); drops, with no
+  write, any tile whose svg is missing or whose viewBox is no
+  longer one of the two RT viewBoxes (the app repatched the node
+  into a different tile; it is not ours to write); drops, with a
+  `warn`, any tile lacking a `.rating-value p` node (markup drift
+  must degrade to an unhydrated tile, never throw: an exception in
+  the scan callback kills the rest of that pass, chip management
+  included); and **clears the whole tracker
   whenever the page key changes**: Svelte reuses row nodes across
   SPA navigations, so without the page-key clear a tile tracked on
   a dead-tile title could survive as another title's live native
   tile and be overwritten. The page-key clear first resets each
-  still-connected tracked tile's value text to "-", guarded by a
-  per-tile record of the last text the script wrote (only
-  script-written text is reset; text Svelte has already repatched is
-  left alone): node reuse means a score written on title A can
-  otherwise survive into title B's tiles, where the leave-alone
-  render branch below would preserve it. For the same reason, this
-  slice extends the takeover pass to normalize a taken tile's value text
-  to "-" when it reads anything else -- the one childList write in
-  the pass, compare-guarded so it fires at most once per anomaly and
-  cannot loop the body observer. (The class/href dimension of node
+  still-connected tracked tile's value text to "-", guarded by
+  `lastWritten` (only text equal to the script's own last write is
+  reset; text Svelte has already repatched is left alone): node
+  reuse means a score written on title A can otherwise survive into
+  title B's tiles, where the leave-alone render branch below would
+  preserve it. The guard is heuristic, and that is accepted: it
+  infers authorship from text equality, so a reused node whose new
+  native text coincidentally equals the script's last write is
+  wrongly reset to "-" (and, carrying `has-valid-rating`, is not
+  re-taken); the damage is cosmetic and the next app repatch of
+  that tile restores it. For the same cross-title reason, this
+  slice extends the takeover pass to normalize a taken tile's value
+  text to "-" when the text is neither "-" nor that node's own
+  `lastWritten` (foreign text only: the tracker record is
+  consulted, so the script's own hydrated score survives a
+  same-title re-take; on a cross-title re-take the page-key clear
+  has already emptied the tracker, so any surviving score text is
+  foreign by definition and is normalized). The normalization uses
+  the same pinned value-write mechanism as the render (see the
+  write-mechanism paragraph below), so it does not retrigger the
+  body observer; it is compare-guarded regardless, firing at most
+  once per anomaly. (The class/href dimension of node
   reuse was e2e-probed 2026-08-04 with a dead-to-dead SPA
   navigation under the shipped takeover: the end state self-heals,
   since a surviving RT href is re-synced by rewriteRtAnchors and a
@@ -379,14 +442,25 @@ untouched:
   the correct exclusion. Accepted residual: should a repatch path
   ever leave a stale `has-valid-rating` on a genuinely dead tile,
   that tile degrades to an unhydrated "-" and self-corrects on the
-  next app repatch; it is never blanked or overwritten, since the
-  takeover extension and the hydration render both run only on
-  tiles the takeover loop actually processed.) Hydration runs
+  next app repatch.) The tile-text writers, enumerated: the
+  hydration render, the page-key reset, and the takeover
+  normalization are the only three; the maintenance drops above run
+  before all of them and remove app-reclaimed and unwritable tiles,
+  and each writer is additionally guarded as described (every
+  writer also re-resolves `.rating-value p` and skips when absent,
+  covering tiles the takeover added after maintenance ran), so no
+  write in this slice can blank a value the script itself did not
+  disown -- the one exception being the heuristic text-equality
+  basis itself: app text that coincidentally equals the script's
+  last write is misread as script-authored, accepted above as
+  cosmetic. Hydration runs
   on every scan pass over the tracked set, after the takeover call
-  in the same pass: takeover writes are attribute-level and never
-  queue a follow-up scan, so a render placed before the takeover
-  would leave freshly re-taken tiles unhydrated until the next
-  app-driven mutation. Live native tiles are structurally excluded:
+  in the same pass: the takeover's writes are attribute-level
+  except the guarded normalization, whose pinned data write the
+  observer does not see, so a completed takeover never queues the
+  follow-up scan that a render placed before it would need in
+  order to hydrate freshly re-taken tiles; ordering hydration
+  after the takeover hydrates them in the same pass. Live native tiles are structurally excluded:
   they never enter the takeover loop, so they never enter the
   tracker, even when their native score disagrees with RT's. A
   same-title Svelte re-render that restores the dead "-" form is
@@ -395,44 +469,109 @@ untouched:
   .rating-info > .rating-value > p`, an svg sibling preceding
   `.rating-info`; see `## Verification plan (score hydration)`) and
   compares before writing (idempotence); live tiles render with the
-  native `%` suffix, so the render writes `<score>%` and the reset
-  writes "-". Text writes are childList mutations, so an
-  unconditional write would re-trigger the shared body observer
-  every frame, exactly the loop the idempotence rule at the top of
-  CLAUDE.md exists to prevent. **Score source, refetch, and
+  native `%` suffix, so a numeric score renders as `<score>%` and
+  the reset form is "-" (the placeholder is the ASCII hyphen
+  U+002D, and every text comparison in this slice -- the write
+  guard, `lastWritten` equality, the normalization check -- uses
+  trimmed `textContent`). **Write mechanism, pinned:** every probed
+  value node (live movie, dead movie, live show) holds exactly ONE
+  text node carrying the full rendered string ("87%", "-", "96%"),
+  so all three writers mutate `p.firstChild.data` in place: a
+  characterData mutation that the shared body observer (childList +
+  subtree, no characterData) does not fire on at all, and one that
+  preserves Svelte's own bound text node, so a later app repatch
+  writes into the same node and stays visible to the slice's
+  trimmed-`textContent` reads. Replacing the node instead (a
+  `textContent` assignment) would detach Svelte's binding and make
+  the maintenance foreign-text drop's reclaim path silently inert:
+  the app's own updates would land in a detached node the DOM never
+  shows. When a value p does not have the single-text-node shape
+  (unobserved drift), fall back to a compare-guarded `textContent`
+  assignment -- a childList mutation the observer sees once per
+  actual change (the compare guard prevents loops), at the accepted
+  cost that Svelte's binding detaches for that tile.
+  Compare-before-write stays mandatory on both paths (idempotence
+  plus `lastWritten` bookkeeping), exactly the discipline the
+  idempotence rule at the top of CLAUDE.md exists to enforce. **Score source, refetch, and
   throttle:** the MVP's verification fetch already has the RT page
   in hand, so `resolveIds` stores `rtScores` at resolution time on
   match verdicts (see verdict handling; a rejected page's scores are
   never cached, failed or misparsed fetches have nothing to
   contribute, and unknown- and uncertain-verdict entries hydrate through
   the gate below instead) and the fresh-resolution path hydrates without a
-  second fetch. The hydration-side refetch fires when all three
-  hold: the tracked set is nonempty; the entry's `rtPath` is
-  non-null (a null path means demoted-to-search or
-  Wikidata-has-no-path, so there is nothing to fetch and the render
-  rule below resets the tiles to "-"); and `rtScores` is null
-  (treated as infinitely stale; the state of every unknown-verdict
-  entry) or its `fetchedAt` is older than 24h (independent of the
-  month-long id TTL). The fetch is deduped through an in-flight set
+  second fetch. The hydration-side refetch fires when all four
+  hold: the tracked set is nonempty; the entry exists and is fresh
+  by the id TTL (an expired or missing entry is `resolveIds`'
+  business -- scan already refetches it in the same pass, and that
+  resolution rewrites the whole entry, so a hydration fetch on an
+  expired key would race it); the entry's `rtPath` is non-null (a
+  null path means demoted-to-search or Wikidata-has-no-path, so
+  there is nothing to fetch and the render rule below resets the
+  tiles to "-"); and `rtScores` is null (treated as infinitely
+  stale; the state of every unknown-verdict entry) or its
+  `fetchedAt` is older than 24h. The 24h cadence is deliberately
+  shorter than the month-long id TTL because the two age different
+  data: ids are effectively immutable while scores move daily
+  during a title's review window, and a month-stale percentage on a
+  rendered tile misrepresents; 24h bounds the drift at one fetch
+  per displayed title per day (letting scores ride the id TTL was
+  considered and rejected for exactly that drift). The fetch is deduped through an in-flight set
   mirroring `resolveIds`' (hydration runs per scan pass, so passes
   during the in-flight window would otherwise launch duplicates),
-  and its completion writes the cache and calls `queueScan()`
-  (mirroring `resolveIds`) so the scores reach the DOM without
-  waiting for an app-driven mutation. A failed or shape-mismatched
-  fetch still writes
+  and its completion merges, never rewrites: it re-reads the
+  current cache entry and writes only its own fields (`rtScores`,
+  or the not-found demotion below), discarding the result outright
+  when the entry has vanished or its `rtPath` changed mid-flight (a
+  concurrent `resolveIds` write owns the rest of the entry, and
+  hydration must not resurrect ids or a path it never fetched),
+  then calls `queueScan()` (mirroring `resolveIds`) so the scores
+  reach the DOM without waiting for an app-driven mutation.
+  Completion handling follows `fetchRtPage`'s four states: `ok`
+  writes `rtScores: { critics, audience, fetchedAt }` with the
+  fetch-start time (each score an integer 0-100 or null, exactly
+  as parsed); `not-found` demotes to the same entry shape as the
+  resolution-time not-found verdict -- the full blank
+  `rtPath: null`, `rtVerified: false`, `rtTitle: null`,
+  `rtYear: null`, `rtScores: null`, preserving the invariant that
+  `rtTitle`/`rtYear` are non-null exactly on uncertain verdicts --
+  since RT has positively reported the path dead mid-TTL and a
+  dead direct link is strictly worse than the search fallback. The
+  demotion `warn` here carries the discarded path, the entry key
+  (`type:slug`), and the reason token `not-found`; it does not
+  reuse the resolution-time warn's title/year slots, because no
+  Trakt-side identity exists at scan time (the Trakt year is
+  deliberately not cached, per Mechanism). The render rule below
+  then resets the tiles to "-";
+  `parse-failure` and `error` write the failure stamp
   `rtScores: { critics: null, audience: null, fetchedAt }` with the
   fetch-start time: the stamp is what arms the 24h gate. Because
   hydration runs on every scan pass, the stamp and the in-flight
   dedup are both load-bearing, not defense-in-depth. The render
-  rule splits by cause: when the entry is absent or its `rtPath` is
-  null (mid-session demotion or cache eviction), the write target
-  is "-" -- the compare-before-write keeps the reset idempotent,
-  and it clears previously rendered scores that a demotion has just
-  disowned, which "leave unchanged" would wrongly keep on display;
-  when `rtPath` is non-null and only the score fields are null
-  (unknown verdict, failure stamp), leave the current text alone,
-  so a transient refresh failure does not blank last-known-good
-  scores for up to 24h. The resulting display/cache asymmetry
+  rule is per tile, keyed by the write-time-derived kind, and
+  splits by cause:
+  when the entry is absent or its `rtPath` is null (mid-session
+  demotion, hydration's own not-found demotion, or cache eviction),
+  the write target is "-" for every tracked tile -- the
+  compare-before-write keeps the reset idempotent, and it clears
+  previously rendered scores that a demotion has just disowned,
+  which "leave unchanged" would wrongly keep on display; when
+  `rtScores` is null (unknown verdict) or is the all-null failure
+  stamp, leave the current text alone, so a transient refresh
+  failure does not blank last-known-good scores for up to 24h;
+  otherwise render each tracked tile from its own field -- a
+  numeric field writes `<score>%`, a null field writes "-", because
+  on a successfully parsed page a missing score is RT's definitive
+  statement that no such score exists (the shipped optional-scores
+  contract), so "-" is the truthful display: the field specimen
+  `rtScores: { critics: null, audience: 87 }` renders a "-" tomato
+  and an "87%" popcorn. One collapse is accepted and named: a
+  successfully parsed page with BOTH scores null writes the same
+  all-null shape as the failure stamp, so it takes the leave-alone
+  branch instead of a truthful double "-"; the visible difference
+  is nil in practice (a never-scored title's tiles already read "-"
+  from takeover, and the stamp re-checks in 24h), and
+  distinguishing the two would widen the cache shape for nothing.
+  The resulting display/cache asymmetry
   (in-memory tiles keep last-known-good text after a failure stamp;
   a reload shows "-" until the 24h gate refetches) is accepted --
   do not "fix" the stamp to avoid it.
@@ -564,34 +703,111 @@ explicitly.
   with a `%` suffix ("87%"), so `.rating-value p` is the write
   target and the render writes `<score>%`
   (live-claim: probed 2026-08-05)
+- Tile markup, dead form, live-probed 2026-08-06
+  (`movies/the-gentleman-thief-2026`, the BUGS_HISTORY dead-tile
+  specimen, observed under the installed 1.32 takeover): both
+  taken-over RT tiles (viewBoxes `0 0 145 140` and `0 0 80 80`)
+  carry the same `.rating-item > svg + .rating-info >
+  .rating-value > p` structure with value text "-", confirming the
+  write target exists in the dead form itself -- the exact
+  population this slice writes to (live-claim: probed 2026-08-06)
+- Tile markup, show page, live-probed 2026-08-06
+  (`shows/breaking-bad`): the show summary row's RT tiles carry
+  the identical `.rating-item > svg + .rating-info > .rating-value
+  > p` structure with the same two RT viewBoxes, the `%` suffix
+  ("96%"/"97%"), and a single text node holding the full rendered
+  string -- the write-mechanism pin's single-text-node premise
+  holds on shows as on movies (also observed on
+  `movies/inception-2010` live and `the-gentleman-thief-2026`
+  dead: one text node everywhere)
+  (live-claim: probed 2026-08-06)
+- Tile markup, dead form on a SHOW page: unprobed -- no dead-tile
+  show specimen was known at spec time (candidates probed
+  2026-08-06 all carried live scores). Pass condition: a show
+  summary page whose RT tiles render the dead form shows the same
+  single-text-node `.rating-value p` structure with value "-" and
+  both RT viewBoxes, and hydration under the injected e2e build
+  writes `<score>%` into it. Settle during this slice's e2e
+  verification (hunt a specimen or drive the injected build on one
+  found organically); until then the show-page dead form is an
+  assumption inherited from the movie dead form plus the identical
+  live-form markup (live-claim: provisional)
 - Display parity, live-probed 2026-08-05 (`m/inception`): the
   rendered critics-score slot ("86%") equals the scorecard blob's
   top-level `criticsScore.score` ("86"), and the rendered
   audience-score slot ("91%", Popcornmeter) equals top-level
   `audienceScore.score` ("91"), which equals the blob's
   `audienceAll` variant; `audienceVerified` differs ("86"). The
-  shipped parser reads the top-level fields, so the resolved
-  display-parity ruling holds with no parser change
-  (live-claim: probed 2026-08-05)
+  shipped parser reads the top-level fields, so the display-parity
+  ruling (a user ruling, 2026-08-05: the tiles must show the same
+  numbers as RT's own critics-score and audience-score slots,
+  display parity over any fixed variant choice) holds with no
+  parser change (live-claim: probed 2026-08-05)
+- Display parity, tv context, live-probed 2026-08-06
+  (`tv/breaking_bad`: rendered slots 96%/97%; and
+  `tv/the_last_of_us`, a currently-airing multi-season show with
+  divergent per-season scores: rendered slots 94%/62%): on both
+  pages the rendered critics-score and audience-score slots equal
+  the values the shipped parse semantics return (first script
+  containing `criticsScore`, first regex match), and each page
+  serializes exactly ONE `criticsScore`/`audienceScore` scorecard
+  in that script, so no season-scoped scorecard can bind ahead of
+  the series-level one; the parity ruling holds on tv with no
+  parser change (live-claim: probed 2026-08-06)
 - Gate matrix, stub-driven, one band each; pass condition per band
   is the asserted fetch count plus the cache and tile end state:
-  (a) tracked tile, non-null `rtPath`, `rtScores` null: exactly one
+  (a) tracked pair, non-null `rtPath`, `rtScores` null: exactly one
   hydration fetch across repeated scans (in-flight dedup), the
   completion writes integer scores with a numeric `fetchedAt` and
-  calls `queueScan`, and the tiles read `<critics>%` / `<audience>%`
-  on the next pass; (b) fresh stamp (younger than 24h): zero
-  fetches; (c) seeded stale stamp (older than 24h): exactly one
-  fetch; (d) `rtPath` null: zero fetches and both tiles reset to
-  "-"; (e) failure-stubbed fetch: `rtScores` written as
+  calls `queueScan`, and on the next pass the critics-kind (tomato)
+  tile reads `<critics>%` and the audience-kind (popcorn) tile
+  reads `<audience>%` -- the kind-to-value binding is the
+  assertion, not just "both tiles show numbers"; (b) fresh stamp
+  (younger than 24h): zero fetches; (c) seeded stale stamp (older
+  than 24h): exactly one fetch; (d) `rtPath` null: zero fetches and
+  both tiles reset to "-"; (e) failure-stubbed fetch (`error` and
+  `parse-failure`): `rtScores` written as
   `{ critics: null, audience: null, fetchedAt }` with fetch-start
   time, tile text left unchanged, and zero further fetches until
-  the stamp is re-aged.
+  the stamp is re-aged; (f) partial-score `ok` fetch stubbed as
+  `{ critics: null, audience: 87 }`: the critics-kind tile reads
+  "-" and the audience-kind tile reads "87%"; (g) not-found-stubbed
+  fetch: the entry becomes the full blank (`rtPath`/`rtTitle`/
+  `rtYear`/`rtScores` null, `rtVerified` false) with ids and
+  `fetchedAt` intact (merge-write), the demotion `warn` fires
+  carrying the discarded path, the entry key, and reason token
+  `not-found`, and both tiles reset to "-"; (h) entry expired by
+  the id TTL: zero hydration fetches (the pass belongs to
+  `resolveIds`); (i) mid-flight entry change: with a hydration
+  fetch in flight, rewrite the entry's `rtPath` via the handle,
+  complete the fetch, and assert the result was discarded (entry
+  unchanged by hydration, no tile write from the stale result);
+  (j) cross-title SPA navigation between two dead-tile titles with
+  cached scores: after the page-key change, the navigated-to
+  title's pair is re-taken, re-tracked, and hydrated from its own
+  entry (asserting the maintenance-then-takeover-then-hydration
+  order end to end: a clear that ran after the takeover would
+  strand the new pair unhydrated); (k) a tracked tile whose
+  `.rating-value p` node is removed: the tile is dropped with a
+  `warn`, no exception propagates, and the pass's remaining
+  features (chip management included) still run.
 - Tracker behavior: takeover returns its processed tiles and the
-  tracker dedupes by node identity across passes; a disconnected
+  tracker dedupes by node identity across passes; every write
+  derives the tile's kind from its current svg viewBox (band (a)
+  asserts the kind-to-value binding); a tracked tile whose svg
+  viewBox leaves the RT pair under an unchanged page key is
+  dropped with no write; a disconnected
   tile drops out on the next pass; a page-key change clears the
   tracker and resets only script-written text (a tile seeded with
   foreign text is left alone; a tile carrying the script's own last
-  write is reset to "-").
+  write is reset to "-"); a tracked tile the app repatches to
+  foreign text under an unchanged page key (neither "-" nor its
+  `lastWritten`) is dropped by maintenance with no write and stays
+  unwritten afterward; the takeover normalization rewrites
+  foreign score text to "-" on a tracked re-take but leaves the
+  node's own `lastWritten` text in place; re-accumulating an
+  already-tracked node preserves its record (drive a re-take after
+  a hydrated write and assert `lastWritten` survives).
 - Observer-loop guard: with state unchanged, repeated driven scans
   produce zero tile-text DOM writes (compare text and mutation
   counts across N scans); the shared body observer must settle, not
@@ -627,3 +843,4 @@ explicitly.
 - revise-spec refreshed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc (live-claim deferral dispositions)
 - handover completed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc
 - revise-spec refreshed 2026-08-05 23:07 at 56386fd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: a6ec064f (live-claim probes settled in the field)
+- revise-spec graduated 2026-08-06 01:30 at 9ce6fd3, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (score hydration), Slices/score-hydration bullet, Open questions/display-parity bullet, content: c33383dd

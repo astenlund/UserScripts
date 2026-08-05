@@ -1866,6 +1866,8 @@
       return {
         imdb: typeof ids.imdb === 'string' && ids.imdb ? ids.imdb : null,
         tmdb: typeof ids.tmdb === 'number' ? ids.tmdb : null,
+        title: typeof body.title === 'string' && body.title ? body.title : null,
+        year: typeof body.year === 'number' ? body.year : null,
       };
     }
 

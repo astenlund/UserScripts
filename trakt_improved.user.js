@@ -1661,6 +1661,8 @@
         + '</svg>',
     };
 
+    // ---- Entry cache --------------------------------------------------
+
     // Cache entry per "<type>:<slug>": { imdb, tmdb, rtPath, rtVerified,
     // rtTitle, rtYear, rtScores, fetchedAt }, under a version stamp so a
     // format change forces a refetch. rtVerified is 'auto' | 'uncertain' |
@@ -1691,6 +1693,8 @@
       }
       writeJson(CACHE_KEY, { v: CACHE_VERSION, entries: cacheEntries });
     }
+
+    // ---- Fetch transports ---------------------------------------------
 
     async function jsonFetch(url) {
       const hostname = new URL(url).hostname;
@@ -1742,6 +1746,8 @@
     function gmFetchText(url) {
       return gmXhr(url, r => ({ status: r.status, text: r.responseText }));
     }
+
+    // ---- RT page fetch and parse --------------------------------------
 
     function parseScore(html, field) {
       const m = html.match(new RegExp(`"${field}":\\{[^}]*"score":"(\\d{1,3})"`));
@@ -1804,6 +1810,8 @@
         return { status: 'error' };
       }
     }
+
+    // ---- Two-signal match rule ----------------------------------------
 
     // Case-fold; strip diacritics (NFD, drop combining marks); delete
     // apostrophes (ASCII, right single quote, modifier letter); every other
@@ -1901,6 +1909,8 @@
       return { rtPath, rtVerified: 'uncertain', rtTitle: result.data.name, rtYear: result.data.year, rtScores: null };
     }
 
+    // ---- Id resolution ------------------------------------------------
+
     // The app's canonical ids for the title, riding along on its own OAuth
     // token; these beat scraping the page's IMDb tile, which shares provenance
     // with the unreliable native RT links.
@@ -1985,6 +1995,8 @@
       const title = h1 ? h1.textContent.trim() : '';
       return title || null;
     }
+
+    // ---- Link rendering -----------------------------------------------
 
     function rtSearchUrl(title) {
       return 'https://www.rottentomatoes.com/search?search=' + encodeURIComponent(title);

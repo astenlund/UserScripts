@@ -1,6 +1,6 @@
 # RT page bridge: link verification and score hydration
 
-Status: signed off 2026-08-05 18:05, content: 0c7c810e
+Status: signed off 2026-08-05 23:50, content: 88e15e6f
 
 Fetch the resolved Rotten Tomatoes page itself and use it two ways:
 confirm that the RT link the script serves actually belongs to the

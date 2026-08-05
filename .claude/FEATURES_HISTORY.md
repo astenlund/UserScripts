@@ -68,3 +68,17 @@ what already shipped, not to resolve dependencies.
   review fixes autosquashed in); e2e-verified live with a namespaced
   page-context build (all sweep URLs busted; a foreign marker bump
   drove exactly one sweep in an idle tab within ~6s).
+- [RT page bridge: MVP -- link verification](features/rt-page-bridge.md):
+  resolved RT paths are now verified against the RT page itself at
+  resolution time under a two-signal match rule (year +-1 and
+  normalized title; demotion to title search only when both signals
+  disagree or RT returns a hard 404/410 for the path); intermediate
+  outcomes cache rtVerified: 'uncertain' with the RT-side title and
+  year for the future click-time confirm slice, and match verdicts
+  opportunistically cache integer rtScores for score hydration. Cache
+  entry widened under CACHE_VERSION 2 (initExternalLinks copy),
+  @connect www.rottentomatoes.com added. Shipped 2026-08-05 in Trakt
+  Improved 1.32 (commits 47e7b91..2f9c10a plus review fixups pending
+  autosquash); e2e-verified live with a namespaced page-context build
+  (all verdict bands, warn payloads, backoff independence, v1 to v2
+  cache migration, anchor flip both directions).

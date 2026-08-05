@@ -192,12 +192,8 @@ serve JSON-LD (name, dateCreated) plus a scorecard JSON
 
 **Slices:**
 
-- **MVP -- link verification.** Verify rtPath in `resolveIds` under
-  the two-signal match rule (demote only when year and title both
-  disagree, or on an RT-reported dead path), cache the verdict enum
-  plus, on auto-match only, `rtScores` from the same fetch (and RT
-  title/year on uncertain, feeding the confirm slice); intermediate
-  outcomes stay direct and logged. No rendering changes.
+- ~~**MVP -- link verification.**~~ (Shipped 2026-08-05 in Trakt
+  Improved 1.32 -- see FEATURES_HISTORY.md.)
 - **Click-time confirm.** One-time popup on plain left-click of an
   uncertain RT anchor: open (user-verified) or not-it (demote to
   search); user rulings carry forward across TTL refetches of the

@@ -180,9 +180,10 @@ line in `FEATURES.md` / `BUGS.md` to drop now-satisfied references.
 Fetch the resolved Rotten Tomatoes page (GM_xmlhttpRequest, new
 `@connect www.rottentomatoes.com`) and use it two ways: verify at
 resolution time that the Wikidata-bridged RT path actually matches
-the title (three-tier verdict: year gate with +-1 tolerance, then
-normalized-title gate; year mismatch demotes to title search,
-same-year title disagreement records `uncertain` for a click-time
+the title (two-signal verdict: year gate with +-1 tolerance and a
+normalized-title gate; demotion to title search only when both
+signals disagree or RT reports the path dead, single-signal
+disagreement records `uncertain` for a click-time
 confirm), and hydrate the "-" values on taken-over dead RT tiles
 with real critic/audience scores. Probed 2026-08-04: RT movie pages
 serve JSON-LD (name, dateCreated) plus a scorecard JSON
@@ -192,11 +193,11 @@ serve JSON-LD (name, dateCreated) plus a scorecard JSON
 **Slices:**
 
 - **MVP -- link verification.** Verify rtPath in `resolveIds` under
-  the three-tier match rule, cache the verdict enum plus, on
-  auto-match only, `rtScores` from the same fetch (and RT title/year
-  on uncertain, feeding the confirm slice); demote year mismatches
-  to search links, keep uncertain links direct and logged. No
-  rendering changes.
+  the two-signal match rule (demote only when year and title both
+  disagree, or on an RT-reported dead path), cache the verdict enum
+  plus, on auto-match only, `rtScores` from the same fetch (and RT
+  title/year on uncertain, feeding the confirm slice); intermediate
+  outcomes stay direct and logged. No rendering changes.
 - **Click-time confirm.** One-time popup on plain left-click of an
   uncertain RT anchor: open (user-verified) or not-it (demote to
   search); user rulings carry forward across TTL refetches of the

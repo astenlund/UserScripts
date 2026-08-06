@@ -92,7 +92,49 @@ attribute above, whose value dynamics were not recorded), whether
 that state also gates the app's own click handler, and what
 produces the wrong background color are unprobed; the
 pre-implementation probe in the Verification plan settles them
-(live-claim: provisional).
+(live-claim: probed 2026-08-07; the transients did not reproduce
+and no carrier was identified, see the re-probe record below).
+
+Re-probed 2026-08-07 (pre-implementation probe, items (a)-(d)):
+
+- Title equality (probe a): CONFIRMED byte-equal per entry point
+  (summary heading vs drawer label title; card kebab aria-label
+  title vs drawer label title).
+- Greyed state and wrong background (probes b, c): did not
+  reproduce across multiple first and second opens on two page
+  loads and both surfaces; rows rendered with `disabled="false"`,
+  parseable labels, and settled backgrounds from the first sampled
+  frame. The greyed-state carrier is therefore unidentified: the
+  clearing sub-step is dropped per its fallback, and the transients
+  remain uncharacterized user observations (plausibly
+  network-timing dependent).
+- Pre-resolution labels (probe b): parseable with the correct title
+  from the first sample in every observed open.
+- Drawer lifecycle (supersedes the parked-singleton and cross-open
+  row-reuse claims above for the current app version): the drawer
+  UNMOUNTS on dismissal (a stamped data attribute never survived a
+  close/reopen cycle, and `div.trakt-drawer` is absent from the DOM
+  between opens, verified on both surfaces). Each open creates
+  fresh row nodes, so cross-item node reuse does not occur; the
+  stale-item marker arm and probe (d)'s fill-repaint question are
+  moot for this version (the fill-normalization sub-step is NOT
+  selected), and the marker machinery is retained as cheap defense
+  in case the app reverts to a persistent drawer. A welcome
+  corollary: every open mounts a new drawer subtree, which is
+  childList churn the shared body observer sees, so the initial
+  correction scan on open is mechanism-backed, not ambient. The
+  in-place patching of rows during a native toggle within one open
+  session (the 2026-08-05 observation) still holds.
+- Menu row text: both surfaces render the row as the exact string
+  "Manage lists…" (trailing U+2026 ellipsis), not "Manage lists".
+- Menu rows did not respond to synthetic click sequences in this
+  session (trusted clicks were required to open both the menus and
+  the drawer), unlike the 2026-08-05 record; e2e drives these
+  surfaces with trusted clicks.
+- Not probed: the item-icon spinner's markup (its probe requires a
+  native toggle, a server write, out of scope for observation-only
+  probing); the spinner re-arm arm is dropped per its stated
+  fallback pending that recording.
 
 ## Design
 
@@ -114,7 +156,8 @@ sibling injected entries that the app tears down when the popup
 closes, so the read must precede the app's own handler), and a row
 qualifies when it is a menu-row `li` in either menu surface (the
 summary actions menu or the card popup menu) whose trimmed
-textContent equals the exact string "Manage lists":
+textContent equals the exact string "Manage lists…" (trailing
+U+2026 ellipsis, verified on both surfaces 2026-08-07):
 
 - Summary menu: context is `summaryContext()` (pathname-derived
   type/slug, heading title).
@@ -167,8 +210,8 @@ title to equal `drawerContext.title`. This assumes the drawer
 label's embedded title and the captured title (summary heading
 text, or the card kebab aria-label title) are byte-identical
 renderings of the same app-side item title; that equality is
-runtime-owned and the pre-implementation probe in the Verification
-plan settles it per entry point (live-claim: provisional). Mismatch
+runtime-owned and was probed per entry point (live-claim: probed
+2026-08-07, byte-equal on both surfaces). Mismatch
 means a title-format divergence, a drawer opened for a different
 item through a path the capture missed, or the ordinary item-switch
 transient (the capture-phase context install strictly precedes the
@@ -181,11 +224,13 @@ persistence-gated per the Ownership predicate, whose settle delay
 and clearing rule absorb the item-switch transient), and a
 systematic format divergence
 shows up in the console instead of silently reading as the
-pre-feature bug. No geometry gating is needed: a parked drawer
-still holds the last item's rows, which still match the last
-capture's context (during an item switch the rows lag the freshly
-captured context until the app's per-item render, a transient the
-warn gate absorbs), and correcting invisible rows is harmless.
+pre-feature bug. No geometry gating is needed: in the current app
+version the drawer unmounts on dismissal (re-probe 2026-08-07), so
+there are no parked rows to correct; if a future version parks it
+again, correcting invisible rows is harmless and the rows still
+match the last capture's context (during an item switch the rows
+lag the freshly captured context until the app's per-item render,
+a transient the warn gate absorbs).
 
 ### Ownership predicate
 
@@ -291,15 +336,17 @@ probe in the Verification plan identifies; the clearing write is
 specified against that probe result before implementation begins,
 and if the probe cannot identify a single carrier the clearing
 sub-step is dropped (owned rows then keep the app's native
-transient; the rest of the feature is unaffected). Rationale:
+transient; the rest of the feature is unaffected). Probe outcome
+2026-08-07: the transients did not reproduce and no carrier was
+identified; the clearing sub-step IS dropped for this slice.
+Rationale:
 engine truth does not depend on the app's query, so the rows
 become usable as soon as their labels are parseable, and the
 visual affordance always agrees with the intercepted click.
 Whether the pre-resolution render already carries parseable
-labels with the item's title is part of probe item (b)
-(live-claim: provisional); if it does not, corrections and the
-clearing begin when the query resolves and the attribute observer
-re-scans. The
+labels with the item's title was probed (live-claim: probed
+2026-08-07, parseable from the first sample in every observed
+open), so corrections begin on the open's first scan. The
 wrong-background anomaly is deliberately NOT corrected in this
 slice: its cause is uncharacterized and the most plausible carrier
 (`data-variant`) is fenced below; the probe records its cause for a
@@ -346,8 +393,11 @@ accepted pending probe: on the fail-closed item-switch path the
 app's in-place patch rewrites the label (it embeds the title) but
 has not been probed to repaint a `fill` whose bound value is
 unchanged across the switch, so a previously corrected fill could
-survive onto the new item's row (live-claim: provisional; probe
-item (d)). The same question applies to the greyed-state carrier
+survive onto the new item's row (live-claim: probed 2026-08-07:
+moot, the drawer unmounts on dismissal and rows are not reused
+across opens in the current app version, so the sub-step is NOT
+selected; the machinery remains specified as defense against a
+future persistent-drawer version). The same question applies to the greyed-state carrier
 the renderer clears: probe item (d) records its repaint behavior
 alongside fill; unlike a stranded fill, a stranded cleared carrier
 self-heals when the new item's membership query resolves (the app
@@ -540,7 +590,11 @@ button opens the menu reliably).
   rewrites the unchanged-value `fill` (and the greyed-state
   carrier, when one was identified) on the per-item render; passes
   either way, and selects between the fill-normalization sub-step
-  and its absence (Rendering corrections).
+  and its absence (Rendering corrections). Probe ran 2026-08-07;
+  outcomes are recorded in the Probed ground truth re-probe block:
+  (a) passed on both entry points; (b)/(c) transients unreproduced,
+  no carrier, clearing sub-step dropped, spinner recording blocked
+  pending a native-toggle probe; (d) moot, sub-step not selected.
 - Correction, per entry point (summary menu AND card popup):
   quick-toggle an item via the menu entry, open the drawer while
   the app cache is stale; the two rows must show engine truth (this
@@ -654,3 +708,4 @@ the open features.
 ## Hardening
 
 - revise-spec graduated 2026-08-07 00:15 at e89c3bb, scope: whole file, content: c6ee0b17 (Completeness at cap: final fix applied unverified)
+- revise-spec refreshed 2026-08-07 00:27 at 2d6489e, scope: whole file, content: 823267cf (live-claim fold-back)

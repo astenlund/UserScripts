@@ -2174,6 +2174,110 @@
       return { ...current, rtScores: { critics: null, audience: null, fetchedAt: fetchStartedAt } };
     }
 
+    // Taken-over dead RT tiles tracked for hydration, keyed by tile node.
+    // lastWritten is the exact string the script last wrote into the tile's
+    // value node (null until the first write); it is the authorship signal
+    // the maintenance drops and the takeover normalization key on. A Map,
+    // not a WeakMap: the per-pass sweep must iterate it.
+    const trackedTiles = new Map();
+    let trackedPageKey = null;
+
+    function valueNode(item) {
+      return item.querySelector('.rating-value p');
+    }
+
+    function tileKind(item) {
+      const svg = item.querySelector('svg');
+      return svg ? RT_TILE_KINDS[svg.getAttribute('viewBox')] ?? null : null;
+    }
+
+    function readTileText(vp) {
+      return vp.textContent.trim();
+    }
+
+    // Pinned write mechanism: every probed value node holds exactly one text
+    // node, so mutate its data in place -- a characterData mutation the body
+    // observer (childList only) never fires on, and one that keeps Svelte's
+    // bound text node attached so app repatches stay visible to reads. The
+    // textContent fallback (childList, observed once per change thanks to
+    // the compare guard) covers markup drift at the accepted cost of
+    // detaching the binding for that tile.
+    function writeTileText(item, text) {
+      const vp = valueNode(item);
+      if (!vp) return;
+      if (readTileText(vp) === text) return;
+      if (vp.childNodes.length === 1 && vp.firstChild.nodeType === Node.TEXT_NODE) {
+        vp.firstChild.data = text;
+      } else {
+        vp.textContent = text;
+      }
+      const record = trackedTiles.get(item);
+      if (record) {
+        record.lastWritten = text;
+      }
+    }
+
+    // Per-pass tracker maintenance; runs before the takeover call and before
+    // any writer. On a page-key change: reset the script's own text (guarded
+    // by lastWritten; app-repatched text is left alone) and forget everything
+    // (Svelte reuses row nodes across SPA navigations). Same key: drop
+    // disconnected tiles, tiles the app reclaimed (foreign text), tiles that
+    // stopped being RT tiles (viewBox left the pair), and tiles whose value
+    // node vanished (markup drift degrades to unhydrated, never throws).
+    function maintainTracker(pageKey) {
+      if (pageKey !== trackedPageKey) {
+        for (const [item, record] of trackedTiles) {
+          if (!item.isConnected || record.lastWritten === null) continue;
+          const vp = valueNode(item);
+          if (vp && readTileText(vp) === record.lastWritten) {
+            writeTileText(item, '-');
+          }
+        }
+        trackedTiles.clear();
+        trackedPageKey = pageKey;
+        return;
+      }
+      for (const [item, record] of trackedTiles) {
+        if (!item.isConnected) {
+          trackedTiles.delete(item);
+          continue;
+        }
+        const vp = valueNode(item);
+        if (!vp) {
+          warn('Tracked RT tile lost its value node; dropping it from hydration');
+          trackedTiles.delete(item);
+          continue;
+        }
+        if (!tileKind(item)) {
+          trackedTiles.delete(item);
+          continue;
+        }
+        const text = readTileText(vp);
+        if (text !== '-' && text !== record.lastWritten) {
+          trackedTiles.delete(item);
+        }
+      }
+    }
+
+    // Insert-if-absent accumulation plus the takeover normalization: foreign
+    // score text on a just-taken tile is reset to "-" (on a cross-title
+    // re-take the page-key clear has already emptied the tracker, so any
+    // surviving score text is foreign by definition); the node's own
+    // lastWritten text survives a same-title re-take.
+    function trackTakenTiles(taken) {
+      for (const item of taken) {
+        if (!trackedTiles.has(item)) {
+          trackedTiles.set(item, { lastWritten: null });
+        }
+        const vp = valueNode(item);
+        if (!vp) continue;
+        const text = readTileText(vp);
+        if (text !== '-' && text !== trackedTiles.get(item).lastWritten) {
+          writeTileText(item, '-');
+        }
+      }
+    }
+
     function scan() {
       const page = pageContext();
       if (!page) return;

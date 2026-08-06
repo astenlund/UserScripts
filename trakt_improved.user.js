@@ -1698,6 +1698,13 @@
       writeJson(CACHE_KEY, { v: CACHE_VERSION, entries: cacheEntries });
     }
 
+    // Missing-or-expired by the id TTL: the shared gate that decides both
+    // when scan hands a key to resolveIds and when hydration must stand
+    // aside (the two must agree, or hydration races the whole-entry write).
+    function entryExpired(entry, now) {
+      return !entry || now - entry.fetchedAt > CACHE_TTL_MS;
+    }
+
     // ---- Fetch transports ---------------------------------------------
 
     async function jsonFetch(url) {
@@ -2148,7 +2155,7 @@
     // Expired or missing entries belong to resolveIds, whose completion
     // rewrites the whole entry; fetching for them here would race it.
     function hydrationFetchDue(entry, now) {
-      if (!entry || now - entry.fetchedAt > CACHE_TTL_MS) return false;
+      if (entryExpired(entry, now)) return false;
       if (!entry.rtPath) return false;
       return !entry.rtScores || now - entry.rtScores.fetchedAt > SCORE_TTL_MS;
     }
@@ -2199,6 +2206,13 @@
 
     function readTileText(vp) {
       return vp.textContent.trim();
+    }
+
+    // Foreign text: neither the dash placeholder nor the script's own last
+    // write -- the app has repatched the tile with its own data.
+    function hasForeignText(vp, record) {
+      const text = readTileText(vp);
+      return text !== '-' && text !== record.lastWritten;
     }
 
     // Pinned write mechanism: every probed value node holds exactly one text
@@ -2258,8 +2272,7 @@
           trackedTiles.delete(item);
           continue;
         }
-        const text = readTileText(vp);
-        if (text !== '-' && text !== record.lastWritten) {
+        if (hasForeignText(vp, record)) {
           trackedTiles.delete(item);
         }
       }
@@ -2272,13 +2285,13 @@
     // lastWritten text survives a same-title re-take.
     function trackTakenTiles(taken) {
       for (const item of taken) {
-        if (!trackedTiles.has(item)) {
-          trackedTiles.set(item, { lastWritten: null });
+        let record = trackedTiles.get(item);
+        if (!record) {
+          record = { lastWritten: null };
+          trackedTiles.set(item, record);
         }
         const vp = valueNode(item);
-        if (!vp) continue;
-        const text = readTileText(vp);
-        if (text !== '-' && text !== trackedTiles.get(item).lastWritten) {
+        if (vp && hasForeignText(vp, record)) {
           writeTileText(item, '-');
         }
       }
@@ -2341,7 +2354,7 @@
       const key = `${page.type}:${page.slug}`;
       maintainTracker(key);
       const entry = cacheGet(key);
-      if (!entry || Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
+      if (entryExpired(entry, Date.now())) {
         resolveIds(page.type, page.slug);
       }
       // An expired entry still styles the links while the refresh runs:

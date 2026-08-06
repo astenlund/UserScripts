@@ -1643,6 +1643,10 @@
     // yet; id mappings drift rarely, so a month keeps lookups near zero.
     const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
     const CACHE_MAX_ENTRIES = 500;
+    // Scores age faster than ids: they move daily during a title's review
+    // window, so hydration refreshes them on a 24h cadence independent of
+    // the month-long id TTL.
+    const SCORE_TTL_MS = 24 * 60 * 60 * 1000;
     const RT_PATH_PATTERN = /^(m|tv)\/[\w-]+$/;
 
     // The app's row CSS renders every tile icon at height 14 with width from
@@ -2058,7 +2062,11 @@
     // dead form are simply re-taken on the next scan. Scope is the summary
     // row only, deliberately: whether the ratings drawer ever renders dead
     // tiles is unverified, so the drawer keeps rewrite-only treatment.
-    const RT_TILE_VIEWBOXES = new Set(['0 0 145 140', '0 0 80 80']);
+    // Critic tomato and audience popcorn viewBoxes, captured from live markup
+    // during the 1.31 dead-tile diagnosis. The kind map feeds hydration's
+    // write-time kind derivation; the Set keeps the takeover's membership test.
+    const RT_TILE_KINDS = { '0 0 145 140': 'critics', '0 0 80 80': 'audience' };
+    const RT_TILE_VIEWBOXES = new Set(Object.keys(RT_TILE_KINDS));
 
     function takeOverDeadRtTiles(row, url) {
       for (const item of row.querySelectorAll(`rating:not(.${CHIP_CLASS}) .rating-item:not(.has-valid-rating)`)) {
@@ -2125,6 +2133,45 @@
     function removeChip(row, kind) {
       const chip = row.querySelector(`.${CHIP_CLASS}[${KIND_ATTR}="${kind}"]`);
       if (chip) chip.remove();
+    }
+
+    // ---- Score hydration ----------------------------------------------
+
+    // Hydration refetch gate (minus the nonempty-tracker check the caller
+    // owns): only fresh entries with a live path and null-or-stale scores.
+    // Expired or missing entries belong to resolveIds, whose completion
+    // rewrites the whole entry; fetching for them here would race it.
+    function hydrationFetchDue(entry, now) {
+      if (!entry || now - entry.fetchedAt > CACHE_TTL_MS) return false;
+      if (!entry.rtPath) return false;
+      return !entry.rtScores || now - entry.rtScores.fetchedAt > SCORE_TTL_MS;
+    }
+
+    // Per-tile render decision: returns the text to write, or null to leave
+    // the current text alone. A null score field on a parsed page renders as
+    // "-" (RT's definitive no-such-score); the all-null shape doubles as the
+    // failure stamp and must not blank last-known-good text.
+    function renderPlan(entry, kind) {
+      if (!entry || !entry.rtPath) return '-';
+      const scores = entry.rtScores;
+      if (!scores || (scores.critics === null && scores.audience === null)) return null;
+      const score = kind === 'critics' ? scores.critics : scores.audience;
+      return score === null ? '-' : `${score}%`;
+    }
+
+    // Completion merge: write only hydration's fields onto the CURRENT
+    // entry; a vanished entry or changed path means a concurrent resolution
+    // owns the entry and the stale result is discarded (returns null).
+    // not-found demotes to the same five-field blank as resolution time.
+    function mergeHydration(current, rtPath, result, fetchStartedAt) {
+      if (!current || current.rtPath !== rtPath) return null;
+      if (result.status === 'ok') {
+        return { ...current, rtScores: { critics: result.data.critics, audience: result.data.audience, fetchedAt: fetchStartedAt } };
+      }
+      if (result.status === 'not-found') {
+        return { ...current, rtPath: null, rtVerified: false, rtTitle: null, rtYear: null, rtScores: null };
+      }
+      return { ...current, rtScores: { critics: null, audience: null, fetchedAt: fetchStartedAt } };
     }
 
     function scan() {

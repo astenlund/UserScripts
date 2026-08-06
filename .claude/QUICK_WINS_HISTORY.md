@@ -136,3 +136,27 @@ not to resolve dependencies.
   sibling reference that only runs post-init. Confirmed as sprawl by
   the 1.29 revise-code loop; follows the initFadeFilters closure-split
   precedent above.
+- **Wrap score hydration in a named sub-module** (shipped 2026-08-06,
+  commit 9e8793f, Trakt Improved 1.34). The ~200-line score-hydration
+  subsystem inside `initExternalLinks` (the `hydrationFetchDue` /
+  `renderPlan` / `mergeHydration` decision helpers, the `trackedTiles`
+  tracker with `maintainTracker` / `trackTakenTiles` / `writeTileText`,
+  and the `hydrateScores` / `hydrateTiles` pair) moved into a
+  `const hydration = (function initScoreHydration() { ... })()`
+  sub-IIFE returning the three-method interface `scan()` actually
+  consumes: `maintainTracker`, `trackTakenTiles`, `hydrateTiles`.
+  Everything else (10 functions, the `trackedTiles` / `trackedPageKey`
+  / `hydrationInFlight` state) became internal; the boundary
+  primitives (`cacheGet`, `cachePut`, `RT_TILE_KINDS`, `fetchRtPage`,
+  `queueScan`, `warn`, `entryExpired`, `SCORE_TTL_MS`) stay closure
+  captures since the sub-IIFE nests inside the feature closure.
+  Follows the `initListMembership` sub-closure precedent. Pure
+  structural refactor, zero text changes inside the block (verified
+  with `git diff -w`: only the wrapper, the return, and three
+  `hydration.`-prefixed call sites); all function names preserved so
+  the `.tmp` extract-and-eval scripts' `function <name>(` anchors
+  still match. Done via a scripted line-range transform rather than
+  hand-retyped edits, keeping the CRLF endings and the file's one
+  pre-existing non-ASCII byte provably untouched. Originally deferred
+  from the 2026-08-06 revise-code review to keep freshly e2e-verified
+  code untouched.

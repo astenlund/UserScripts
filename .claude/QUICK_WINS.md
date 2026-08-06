@@ -20,27 +20,6 @@ keys -- never on line numbers, plan-phase ordinals, bullet positions,
 or temporal qualifiers ("new", "recent"): a precise locator that rots
 misleads harder than a coarse one that holds.
 
-## trakt_improved structure
-
-### Wrap score hydration in a named sub-module
-
-The score-hydration subsystem inside `initExternalLinks` (the
-`hydrationFetchDue` / `renderPlan` / `mergeHydration` decision
-helpers, the `trackedTiles` tracker with `maintainTracker` /
-`trackTakenTiles` / `writeTileText`, and the `hydrateScores` /
-`hydrateTiles` pair) is a ~200-line, 13-function unit with its own
-state living at the same closure depth as chip rendering and id
-resolution; it crosses the boundary through six primitives
-(`cacheGet`, `cachePut`, `RT_TILE_KINDS`, `fetchRtPage`,
-`queueScan`, `warn`). Preferred shape: a named sub-IIFE returning a
-curated interface, following the `initListMembership` precedent in
-the same file (its `store` / `markers` / `fetchers` / `ledger` /
-`sweep` decomposition). Confirmed by revise-code review 2026-08-06
-with the precedent verified; deferred to keep freshly e2e-verified
-code untouched. Note for the mover: the `.tmp` extract-and-eval
-test scripts locate these functions by `function <name>(` search,
-which survives a nesting change but not renames.
-
 ## History
 
 Implemented quick wins are archived in

@@ -3536,6 +3536,58 @@
       }
     }
 
+    // Full-sequence suppression on owned drawer rows (the kebab-listener
+    // pattern): which single event the app's delegated handler consumes
+    // was never isolated, and suppressing the whole sequence removes the
+    // question. keyup is included because the ARIA button convention
+    // activates Space on keyup and a cancelled keydown does not suppress
+    // the corresponding keyup; keypress is subsumed by the cancelled
+    // keydown. Only click (and first, non-repeat keydown of Enter or
+    // Space) fires the write, with add derived from the rendered label
+    // verb at event time: the exact captured-state semantics of
+    // onEntryClick, so the action always matches what the row displayed.
+    // The drawer stays open after a write (native row behavior); the
+    // app's confirm modal never appears for owned rows because its
+    // handler never runs. Non-owned rows keep native behavior including
+    // the confirm flow.
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'keydown', 'keyup']) {
+      document.addEventListener(type, onDrawerEvent, true);
+    }
+
+    function onDrawerEvent(e) {
+      if (!(e.target instanceof Element)) return;
+      const row = e.target.closest('div.trakt-drawer ul li');
+      if (!row) return;
+      if ((e.type === 'keydown' || e.type === 'keyup') && e.key !== 'Enter' && e.key !== ' ') return;
+      const verdict = classifyDrawerRow(row);
+      const marker = row.getAttribute(MARKER_ATTR);
+      const contextKey = drawerContextKey();
+      // Safety net for the one-scan race between de-resolution and
+      // unwind: a marked row in the same-item ownership-loss state must
+      // not fall through to the app while showing script truth. A
+      // marker for a different item, or a row showing a different
+      // title, does not suppress; those rows are native.
+      const lapsed = marker !== null && marker === contextKey
+        && verdict.state === 'failed' && verdict.reason === 'drawer-ownership-lost';
+      if (verdict.state !== 'owned' && !lapsed) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (lapsed) {
+        if (e.type === 'click') {
+          warnDrawerOnce('drawer-ownership-lost', 'list de-resolved under corrected rows; click suppressed');
+        }
+        return;
+      }
+      if (e.type !== 'click' && !(e.type === 'keydown' && !e.repeat)) return;
+      performToggle({
+        name: verdict.name,
+        type: drawerContext.type,
+        slug: drawerContext.slug,
+        title: drawerContext.title,
+        add: verdict.parsed.verb === 'Add',
+      });
+    }
+
     function teardownPopupEntries() {
       for (const entry of document.querySelectorAll(`.trakt-popup-menu-container [${ENTRY_ATTR}]`)) {
         entry.remove();

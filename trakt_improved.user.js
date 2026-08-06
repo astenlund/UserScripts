@@ -2157,7 +2157,7 @@
     function hydrationFetchDue(entry, now) {
       if (entryExpired(entry, now)) return false;
       if (!entry.rtPath) return false;
-      return !entry.rtScores || now - entry.rtScores.fetchedAt > SCORE_TTL_MS;
+      return !entry.rtScores || typeof entry.rtScores.fetchedAt !== 'number' || now - entry.rtScores.fetchedAt > SCORE_TTL_MS;
     }
 
     // Per-tile render decision: returns the text to write, or null to leave
@@ -2174,6 +2174,7 @@
       if (entry.rtVerified === 'uncertain') return '-';
       const scores = entry.rtScores;
       if (!scores || (scores.critics === null && scores.audience === null)) return null;
+      if (kind !== 'critics' && kind !== 'audience') return null;
       const score = kind === 'critics' ? scores.critics : scores.audience;
       return score === null ? '-' : `${score}%`;
     }

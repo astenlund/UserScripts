@@ -2,7 +2,7 @@
 // @name         Trakt Improved
 // @namespace    fork-scripts
 // @version      1.35
-// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3216,8 +3216,10 @@
   // Feature: quick list toggles
   // One-click Anticipated/Uninterested membership toggles in the card
   // popup menu and the summary-page actions menu, with optimistic fade
-  // sync. Membership data rides the list-membership engine's sweep via
-  // quickLists.
+  // sync, plus script-owned truth for the same two rows inside the
+  // app's Manage lists drawer (display corrected from the membership
+  // engine, clicks intercepted into the same write path). Membership
+  // data rides the list-membership engine's sweep via quickLists.
   // ---------------------------------------------------------------------
 
   (function initQuickListToggles() {

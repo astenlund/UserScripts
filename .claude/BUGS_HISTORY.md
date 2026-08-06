@@ -68,7 +68,10 @@ list adds miss the fade treatment" entry, fixed the next day by
 fresh-membership-sweeps (see its archive entry below). The Manage-lists staleness itself is app-structural
 (no invalidation channel a script can drive); the script's own
 surfaces (entry icons, fades, failure toasts) remain the truthful
-verification points.
+verification points. (Superseded for the two quick-list rows by the
+manage-lists row takeover, shipped 2026-08-07 in 1.35, which makes
+the drawer rows themselves script-owned truth; the
+no-drivable-invalidation-channel diagnosis stays accurate.)
 
 ### Cross-tab list adds miss the fade treatment until it eventually self-heals
 

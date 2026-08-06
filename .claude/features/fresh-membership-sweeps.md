@@ -175,17 +175,16 @@ Interaction notes:
 
 ## Anti-goals
 
-- **Manage-lists row takeover (deferred).** Script-owned truth for
-  the two quick-list rows inside the app's Manage lists panel was
-  considered and deferred: taking over app-managed Svelte rows is
-  the highest-cost option on the table, and the script's own
-  surfaces (menu entries, fades, toasts) stay truthful. The deferral
-  originally also leaned on an observed ~30s panel self-convergence,
-  falsified 2026-08-04 under 1.29: the panel converges only on the
-  app's next mutation-driven refetch (any native list-affecting
-  action) or a reload, so it can misreport quick-list membership
-  indefinitely. Revisit if that indefinite lag proves annoying in
-  practice.
+- **Manage-lists row takeover (shipped 2026-08-07).** Script-owned
+  truth for the two quick-list rows was considered and deferred here
+  as the highest-cost option, then picked up and shipped in Trakt
+  Improved 1.35: see
+  [manage-lists-row-takeover.md](manage-lists-row-takeover.md) for
+  the design that superseded this deferral. The staleness diagnosis
+  recorded below (the panel converges only on the app's next
+  mutation-driven refetch or a reload; the ~30s self-convergence was
+  falsified 2026-08-04 under 1.29) remains the accurate record and
+  is what motivated the takeover.
 - **Out-of-partition staleness.** The storage-event channel is
   scoped to same-origin tabs of one browser profile. Writes made
   anywhere else on the same or another device (a different browser

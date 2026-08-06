@@ -100,3 +100,17 @@ what already shipped, not to resolve dependencies.
   reset, zero-mutation observer guard, show-page context). One
   residual: dead-form tile markup on a genuine show page stays a
   provisional live-claim in the spec (no specimen existed to probe).
+- [Manage-lists row takeover](features/manage-lists-row-takeover.md):
+  script-owned truth for the Anticipated/Uninterested rows inside the
+  app's Manage lists drawer: attribute-only corrections from the
+  membership engine (label verb, bookmark fill), full event-sequence
+  click interception into performToggle with rendered-verb semantics,
+  an item-scoped correction marker, failure-reason warn keys behind a
+  persistence gate, and a per-drawer-node attribute observer for
+  one-frame re-assertion. Fail-closed everywhere (title cross-check,
+  slug-sourced context rejection, movie/show scope). Shipped
+  2026-08-07 in Trakt Improved 1.35 (commits add7d03..73f29b3 plus
+  review fixups); mechanics verified flow-level against the live app
+  with server-verified writes the same night (real-drawer integration
+  bullets deferred to a visible-window pass, see the spec's
+  verification plan).

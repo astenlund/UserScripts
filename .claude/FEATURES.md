@@ -203,25 +203,6 @@ serve JSON-LD (name, dateCreated) plus a scorecard JSON
 
 **Requires:** none.
 
-## Quick lists
-
-### [Manage-lists row takeover](features/manage-lists-row-takeover.md)
-
-Script-owned truth for the Anticipated/Uninterested rows inside the
-app's Manage lists drawer, which misreports quick-list membership
-after script writes until the user's next native action or a reload.
-Live-probed 2026-08-05: the drawer is a body-level singleton whose
-rows Svelte patches in place (foreign attributes survive toggles,
-refetches, and close/reopen), membership display is exactly two
-attributes (label verb, bookmark fill), and a capture-phase listener
-fully suppresses the app's row handler. Design: attribute-only
-corrections from the membership engine plus click interception into
-`performToggle`, gated by a fail-closed title cross-check; removes
-are one-click; all other rows stay native. Full design and
-verification plan in the feature file.
-
-**Requires:** none.
-
 ## Exploring
 
 Pre-dependency-analysis brainstorms live here. An entry is a draft

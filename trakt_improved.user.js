@@ -1672,8 +1672,8 @@
     // format change forces a refetch. rtVerified is 'auto' | 'uncertain' |
     // false ('user' reserved for click-time confirm); rtTitle/rtYear are
     // non-null exactly on uncertain verdicts; rtScores is
-    // { critics, audience, fetchedAt } (integers 0-100 or null) exactly on
-    // match verdicts.
+    // { critics, audience, fetchedAt } (integers 0-100 or null): match-only
+    // at resolution time, refreshed verdict-agnostically by score hydration.
     function loadCache() {
       const raw = readJson(CACHE_KEY);
       const versionOk = raw && typeof raw === 'object' && raw.v === CACHE_VERSION;
@@ -2057,11 +2057,14 @@
     // from two stacked sources, both of which must go: an inline grayscale
     // filter on the svg, and an app rule keyed on the item NOT having
     // has-valid-rating (it lives in a cross-origin sheet, so it is invisible
-    // to cssRules walks). All writes are class/attribute/style-level, so the
-    // body observer does not refire, and Svelte re-renders that restore the
-    // dead form are simply re-taken on the next scan. Scope is the summary
-    // row only, deliberately: whether the ratings drawer ever renders dead
-    // tiles is unverified, so the drawer keeps rewrite-only treatment.
+    // to cssRules walks). This function's writes are class/attribute/style
+    // level, and the hydration pass that follows writes tile text through
+    // characterData mutations (with a compare-guarded textContent fallback
+    // only on markup drift), so the body observer does not refire on any
+    // steady-state path, and Svelte re-renders that restore the dead form
+    // are simply re-taken on the next scan. Scope is the summary row only,
+    // deliberately: whether the ratings drawer ever renders dead tiles is
+    // unverified, so the drawer keeps rewrite-only treatment.
     // Critic tomato and audience popcorn viewBoxes, captured from live markup
     // during the 1.31 dead-tile diagnosis. The kind map feeds hydration's
     // write-time kind derivation; the Set keeps the takeover's membership test.
@@ -2069,6 +2072,7 @@
     const RT_TILE_VIEWBOXES = new Set(Object.keys(RT_TILE_KINDS));
 
     function takeOverDeadRtTiles(row, url) {
+      const taken = [];
       for (const item of row.querySelectorAll(`rating:not(.${CHIP_CLASS}) .rating-item:not(.has-valid-rating)`)) {
         const svg = item.querySelector('svg');
         const anchor = item.closest('a');
@@ -2080,7 +2084,9 @@
         syncHref(anchor, url);
         if (svg.style.filter) svg.style.filter = '';
         item.classList.add('has-valid-rating');
+        taken.push(item);
       }
+      return taken;
     }
 
     // Chips clone a native tile so the app's Svelte-scoped styles keep applying;
@@ -2278,6 +2284,53 @@
       }
     }
 
+    const hydrationInFlight = new Set();
+
+    // Fire-and-forget score refresh, mirroring resolveIds: dedup while in
+    // flight, merge-write on completion, queueScan so the scores reach the
+    // DOM without waiting for an app-driven mutation. fetchRtPage never
+    // throws (four-state result), so the catch mirrors resolveIds' shape
+    // purely defensively.
+    function hydrateScores(key, rtPath) {
+      if (hydrationInFlight.has(key)) return;
+      hydrationInFlight.add(key);
+      (async () => {
+        const fetchStartedAt = Date.now();
+        const result = await fetchRtPage(rtPath);
+        const merged = mergeHydration(cacheGet(key), rtPath, result, fetchStartedAt);
+        if (!merged) return;
+        if (result.status === 'not-found') {
+          warn(`RT path ${rtPath} dead for ${key}; demoting to title search (not-found)`);
+        }
+        cachePut(key, merged);
+        queueScan();
+      })().catch(e => {
+        warn(`Score hydration failed for ${key}`, e);
+      }).finally(() => hydrationInFlight.delete(key));
+    }
+
+    // Render pass over the tracked set plus the throttled refetch. Kind is
+    // derived from each tile's CURRENT svg viewBox at write time, never
+    // snapshotted: node reuse can shift a tracked node's tile identity under
+    // an unchanged page key, and a snapshot would hydrate a repatched node
+    // from a stale kind. renderPlan returning null means leave the text
+    // alone (unknown verdict or failure stamp).
+    function hydrateTiles(key) {
+      if (trackedTiles.size === 0) return;
+      const entry = cacheGet(key);
+      for (const [item] of trackedTiles) {
+        const kind = tileKind(item);
+        if (!kind) continue;
+        const target = renderPlan(entry, kind);
+        if (target !== null) {
+          writeTileText(item, target);
+        }
+      }
+      if (hydrationFetchDue(entry, Date.now())) {
+        hydrateScores(key, entry.rtPath);
+      }
+    }
+
     function scan() {
       const page = pageContext();
       if (!page) return;
@@ -2286,6 +2339,7 @@
       const title = pageTitle();
       if (!title) return;
       const key = `${page.type}:${page.slug}`;
+      maintainTracker(key);
       const entry = cacheGet(key);
       if (!entry || Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
         resolveIds(page.type, page.slug);
@@ -2296,7 +2350,8 @@
       rewriteRtAnchors(rt);
       const templateTile = row.querySelector(`rating:not(.${CHIP_CLASS})`);
       if (!templateTile) return;
-      takeOverDeadRtTiles(row, rt);
+      trackTakenTiles(takeOverDeadRtTiles(row, rt));
+      hydrateTiles(key);
       // A rewritten or taken-over native RT tile already links right, so the
       // icon-only chip is a legacy fallback for rows with no RT tiles at all
       // (current app markup always renders the pair, dead or alive).

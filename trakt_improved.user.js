@@ -3277,6 +3277,11 @@
     };
 
     let pendingContext = null;
+    // Drawer item context: which item the Manage-lists drawer shows.
+    // Captured at the moment a "Manage lists" menu row is clicked (the
+    // only observed open paths); null means every drawer row stays
+    // fully native (fail closed).
+    let drawerContext = null;
     let warnedNoData = false;
     const warnedTargets = new Set();
     const inFlight = new Set();
@@ -3326,6 +3331,53 @@
       teardownPopupEntries();
       pendingContext = cardContext(button);
     }, true);
+
+    // Drawer context capture (capture phase is load-bearing: the card
+    // path reads sibling injected entries that the app tears down when
+    // the popup closes, so the read must precede the app's handler).
+    // Either outcome queues a scan so the corrections a new context
+    // enables, and the unwinds a cleared one requires, never wait on
+    // ambient churn.
+    document.addEventListener('click', e => {
+      if (!(e.target instanceof Element)) return;
+      const row = e.target.closest('.trakt-popup-menu-container li, div.trakt-summary-actions li');
+      if (!row || row.textContent.trim() !== MENU_ROW_TEXT) return;
+      drawerContext = captureDrawerContext(row);
+      queueScan();
+    }, true);
+
+    // A context whose title fell back to the slug can never pass the
+    // drawer title cross-check (a slug is not a display title), so it
+    // is recorded as no context rather than reading as valid while
+    // silently disabling the feature. Accepted narrow false negative:
+    // an item whose display title literally equals its slug.
+    function captureDrawerContext(row) {
+      const context = row.closest('div.trakt-summary-actions') ? summaryContext() : popupDrawerContext(row);
+      if (!context || context.title === context.slug) return null;
+      return { type: context.type, slug: context.slug, title: context.title };
+    }
+
+    // Card path: sibling injected entries already record card identity;
+    // fall back to pendingContext within DRAWER_CONTEXT_FRESH_MS. The
+    // existing CONTEXT_FRESH_MS (2000 ms) guards the kebab-click-to-
+    // first-scan handoff and menu dwell before a Manage-lists click
+    // routinely exceeds it; the title cross-check stays the correctness
+    // guard, freshness only bounds heuristic reuse.
+    function popupDrawerContext(row) {
+      const menu = row.closest('ul');
+      const entry = menu && menu.querySelector('[' + ENTRY_ATTR + ']');
+      if (entry) {
+        return {
+          type: entry.getAttribute('data-qlt-type'),
+          slug: entry.getAttribute('data-qlt-slug'),
+          title: entry.getAttribute('data-qlt-title'),
+        };
+      }
+      if (pendingContext && Date.now() - pendingContext.at <= DRAWER_CONTEXT_FRESH_MS) {
+        return pendingContext;
+      }
+      return null;
+    }
 
     function teardownPopupEntries() {
       for (const entry of document.querySelectorAll(`.trakt-popup-menu-container [${ENTRY_ATTR}]`)) {

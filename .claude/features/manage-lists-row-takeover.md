@@ -166,11 +166,11 @@ U+2026 ellipsis, verified on both surfaces 2026-08-07):
   identity); fall back to `pendingContext` when entries are absent
   and the kebab click that stamped it is at most
   `DRAWER_CONTEXT_FRESH_MS` (15000 ms, a new constant) old, else no
-  context. The existing `CONTEXT_FRESH_MS` (2000 ms) was sized for
-  a sub-frame handoff and menu dwell time routinely exceeds it; the
-  generous window is safe because the title cross-check below
-  remains the correctness guard, freshness only bounds heuristic
-  reuse.
+  context. The existing `CONTEXT_FRESH_MS` (2000 ms) guards the
+  kebab-click-to-first-scan handoff and menu dwell before a Manage
+  lists click routinely exceeds it; the generous window is safe
+  because the title cross-check below remains the correctness
+  guard, freshness only bounds heuristic reuse.
 
 Scope of identities: the takeover covers movie and show items only:
 the summary path's two-segment pathname identity (/movies/<slug>,
@@ -709,3 +709,4 @@ the open features.
 
 - revise-spec graduated 2026-08-07 00:15 at e89c3bb, scope: whole file, content: c6ee0b17 (Completeness at cap: final fix applied unverified)
 - revise-spec refreshed 2026-08-07 00:27 at 2d6489e, scope: whole file, content: 823267cf (live-claim fold-back)
+- revise-spec refreshed 2026-08-07 01:07 at 01673be, scope: whole file, content: 01ebea9e (spec reconciliation)

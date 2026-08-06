@@ -3227,6 +3227,38 @@
     const TOAST_ID = 'qlt-toast';
     const TOAST_DISMISS_MS = 4000;
 
+    // --- Manage-lists drawer takeover ---
+    // Spec: .claude/features/manage-lists-row-takeover.md. The drawer
+    // misreports quick-list membership after script writes (its query
+    // cache has no drivable invalidation channel), so the script owns
+    // the two quick-list rows outright: display corrected from the
+    // membership engine, clicks intercepted into performToggle. Every
+    // other row stays fully native.
+    const DRAWER_CONTEXT_FRESH_MS = 15000;
+    const WARN_SETTLE_MS = 2000;
+    const MARKER_ATTR = 'data-mlrt-item';
+    // Both menu surfaces render the row with a trailing U+2026 ellipsis
+    // (live-probed 2026-08-07); built from a char code so the source
+    // stays ASCII-safe.
+    const MENU_ROW_TEXT = 'Manage lists' + String.fromCharCode(8230);
+
+    // --- mlrt pure helpers (logic-test extraction block) ---
+    // Greedy title group tolerates quotes in titles: the regex anchors
+    // on the LAST " to |" from " before the list name.
+    const DRAWER_LABEL_RE = /^(Add|Remove) "(.*)" (?:to|from) /;
+
+    function parseDrawerLabel(label) {
+      const match = (label || '').match(DRAWER_LABEL_RE);
+      return match ? { verb: match[1], title: match[2] } : null;
+    }
+
+    // Preserves the app's exact label format; only the verb and
+    // preposition flip with membership.
+    function wantedDrawerLabel(label, member) {
+      return label.replace(DRAWER_LABEL_RE, (m, verb, title) => (member ? 'Remove' : 'Add') + ' "' + title + '" ' + (member ? 'from' : 'to') + ' ');
+    }
+    // --- end mlrt pure helpers ---
+
     // Icon table keyed from QUICK_LIST_NAMES via computed properties, so a
     // rename in the shared constant cannot silently orphan an icon set;
     // the per-icon meaning stays positional (first list, second list).

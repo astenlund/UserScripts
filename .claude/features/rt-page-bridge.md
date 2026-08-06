@@ -738,17 +738,16 @@ explicitly.
   `movies/inception-2010` live and `the-gentleman-thief-2026`
   dead: one text node everywhere)
   (live-claim: probed 2026-08-06)
-- Tile markup, dead form on a SHOW page: unprobed -- no dead-tile
-  show specimen was known at spec time (candidates probed
-  2026-08-06 all carried live scores). Pass condition: a show
-  summary page whose RT tiles render the dead form shows the same
-  single-text-node `.rating-value p` structure with value "-" and
-  both RT viewBoxes, and hydration under the injected e2e build
-  writes `<score>%` into it. Settle during this slice's e2e
-  verification (hunt a specimen or drive the injected build on one
-  found organically); until then the show-page dead form is an
-  assumption inherited from the movie dead form plus the identical
-  live-form markup (live-claim: provisional)
+- Tile markup, dead form on a SHOW page, live-probed 2026-08-06
+  (user-supplied specimen
+  `shows/tim-and-eric-awesome-show-great-job`, observed under the
+  installed takeover): both RT tiles carry the single-text-node
+  `.rating-value p` structure with value "-" and both RT viewBoxes,
+  the same shape as the movie dead form and both live forms; the
+  hydration write path against show-row markup was verified in the
+  same e2e run (synthetic dead form on `shows/breaking-bad`
+  hydrated with kind-correct scores)
+  (live-claim: probed 2026-08-06)
 - Display parity, live-probed 2026-08-05 (`m/inception`): the
   rendered critics-score slot ("86%") equals the scorecard blob's
   top-level `criticsScore.score` ("86"), and the rendered
@@ -865,3 +864,4 @@ explicitly.
 - revise-spec refreshed 2026-08-05 23:07 at 56386fd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: a6ec064f (live-claim probes settled in the field)
 - revise-spec graduated 2026-08-06 01:30 at 9ce6fd3, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (score hydration), Slices/score-hydration bullet, Open questions/display-parity bullet, content: c33383dd
 - revise-spec refreshed 2026-08-06 17:05 at cb532a7, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (score hydration), Slices/score-hydration bullet, Open questions/display-parity bullet, content: a2df5f88 (uncertain-verdict render ruling)
+- revise-spec refreshed 2026-08-06 17:23 at 7389e26, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (score hydration), Slices/score-hydration bullet, Open questions/display-parity bullet, content: 359d5d66 (show dead-form live-claim settled on user specimen)

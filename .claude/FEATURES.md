@@ -233,7 +233,15 @@ gates, move it out of `## Exploring` into the appropriate themed `##`
 section, add the `**Requires:**` line, and drop the `status: exploring`
 frontmatter on the breakout file.
 
-No entries at the moment.
+### [Season-scoped RT scores](features/season-scoped-rt-scores.md)
+
+A show page always has a season selected (the `season` query param;
+no param defaults to season 1 in the UI), and RT serves per-season
+pages with their own scorecards, so the tiles could reflect the
+selected season's scores instead of the series-level scorecard the
+shipped hydration renders. Product call, RT season-page shape, cache
+widening, and the season-aware page key are all open; captured
+2026-08-06, design not started.
 
 ## History
 

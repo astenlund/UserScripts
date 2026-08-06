@@ -3288,6 +3288,12 @@
     // keys, keyed by row node (rows die with the drawer, taking their
     // candidates along).
     const warnCandidates = new WeakMap();
+    // Drawer nodes carrying this feature's attribute observer (the
+    // rating-labels instrumented WeakSet idiom): the drawer unmounts on
+    // dismissal in the current app version, so each open's fresh node
+    // gets a fresh observer, and a destroyed node takes its observer
+    // with it.
+    const drawerObserved = new WeakSet();
     const inFlight = new Set();
     let toastTimer = 0;
 
@@ -3443,6 +3449,91 @@
       if (warnedTargets.has(key)) return;
       warnedTargets.add(key);
       warn('Manage-lists drawer: ' + detail);
+    }
+
+    // Drawer renderer. Corrections are attribute-only compare-then-write
+    // (invisible to the shared childList body observer; the guard also
+    // terminates the attribute observer's own bounce after one round).
+    // Re-assertion is self-triggering: the per-node observer queues a
+    // scan on any app patch to a row label or bookmark fill, whatever
+    // transport delivered it, so a patch is re-asserted within a frame.
+    function renderDrawer() {
+      const drawer = document.querySelector('div.trakt-drawer');
+      if (!drawer) return;
+      if (!drawerObserved.has(drawer)) {
+        drawerObserved.add(drawer);
+        new MutationObserver(queueScan).observe(drawer, { subtree: true, attributes: true, attributeFilter: ['label', 'fill'] });
+      }
+      // Menu-open heal precedent: an open drawer heals stale or absent
+      // membership data without a /discover visit; staleness-gated, so
+      // per-frame calls are safe. The state is read once per scan and
+      // handed to the classifier (membershipState walks localStorage).
+      const membershipStateNow = quickLists.membershipState();
+      if (membershipStateNow !== 'fresh') quickLists.refreshMembership();
+      const membershipAbsent = membershipStateNow === 'absent';
+      for (const row of drawer.querySelectorAll('ul li')) {
+        const verdict = classifyDrawerRow(row, membershipAbsent);
+        // Candidate clearing follows the spec's rule exactly: a
+        // candidate clears when the row passes the predicate OR its
+        // failure reason changes. Gated-to-gated changes reset inside
+        // noteGatedWarn; every other outcome clears here or in the
+        // unwind, so a stale firstSeen can never let a later one-frame
+        // blip bypass the gate.
+        if (verdict.state === 'foreign') {
+          warnCandidates.delete(row);
+          continue;
+        }
+        if (verdict.state === 'owned') {
+          warnCandidates.delete(row);
+          // Marker stamped on ownership, not on correction: the key
+          // stays current on rows whose app state already agrees, so a
+          // key mismatch always means an item change.
+          const key = drawerContextKey();
+          if (row.getAttribute(MARKER_ATTR) !== key) row.setAttribute(MARKER_ATTR, key);
+          correctDrawerRow(row, verdict);
+          continue;
+        }
+        unwindDrawerRow(row, verdict);
+      }
+    }
+
+    // data-variant and row order are never touched; the label rewrite
+    // preserves the app's exact format.
+    function correctDrawerRow(row, verdict) {
+      const label = row.getAttribute('label') || '';
+      const wanted = wantedDrawerLabel(label, verdict.member);
+      if (label !== wanted) row.setAttribute('label', wanted);
+      const fill = verdict.member ? 'currentColor' : 'transparent';
+      if (verdict.path.getAttribute('fill') !== fill) verdict.path.setAttribute('fill', fill);
+    }
+
+    // Unwind: drop the marker, write nothing. Restoring pre-correction
+    // attributes was designed and rejected (the app's current belief is
+    // unobservable at unwind time: a patch converged onto engine truth
+    // is value-indistinguishable from the script's own correction), and
+    // the resulting mismatch windows are bounded and self-healing (see
+    // the spec's unwind rationale). Warn only on a genuine same-item
+    // ownership loss; stale residue and capture misses drop silently
+    // (a title mismatch already warns through its own gated key in the
+    // renderer classification).
+    function unwindDrawerRow(row, verdict) {
+      if (verdict.reason === 'drawer-markup') {
+        noteGatedWarn(row, 'drawer-markup', 'quick-list row markup drifted; rows stay native');
+      } else if (verdict.reason === 'drawer-title-mismatch') {
+        noteGatedWarn(row, 'drawer-title-mismatch', 'row title does not match the captured item; rows stay native');
+      } else {
+        // Non-gated failure reason (no-context, ownership loss): the
+        // reason changed, so any recorded gated candidate is stale and
+        // must clear per the spec's clearing rule.
+        warnCandidates.delete(row);
+      }
+      const marker = row.getAttribute(MARKER_ATTR);
+      if (!marker) return;
+      row.removeAttribute(MARKER_ATTR);
+      const contextKey = drawerContextKey();
+      if (marker === contextKey && verdict.reason === 'drawer-ownership-lost') {
+        warnDrawerOnce('drawer-ownership-lost', 'list de-resolved under corrected rows; rows returned to native');
+      }
     }
 
     function teardownPopupEntries() {
@@ -3781,6 +3872,7 @@
     scanCallbacks.push(() => {
       renderPopup();
       renderSummary();
+      renderDrawer();
     });
   })();
 

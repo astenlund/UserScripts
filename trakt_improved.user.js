@@ -3284,6 +3284,10 @@
     let drawerContext = null;
     let warnedNoData = false;
     const warnedTargets = new Set();
+    // Persistence-gate candidates for the drawer's render-facing warn
+    // keys, keyed by row node (rows die with the drawer, taking their
+    // candidates along).
+    const warnCandidates = new WeakMap();
     const inFlight = new Set();
     let toastTimer = 0;
 
@@ -3377,6 +3381,68 @@
         return pendingContext;
       }
       return null;
+    }
+
+    // Marker/membership key for the currently captured drawer item.
+    function drawerContextKey() {
+      return drawerContext ? slugKeyOf(drawerContext.type, drawerContext.slug) : null;
+    }
+
+    // Ownership predicate: one helper decides both rendering and
+    // interception. A row is owned only when every condition holds;
+    // any doubt means native behavior. Failure reasons carry the warn
+    // key (one key per reason); the warn RAISE sites differ: markup and
+    // title-mismatch raise from the renderer through the persistence
+    // gate, ownership-lost raises only at its one-shot sites (the
+    // unwind and the click safety net), so a cold start with absent
+    // data never warns.
+    // Containment in div.trakt-drawer is guaranteed by both call sites
+    // (renderDrawer's drawer-scoped query; onDrawerEvent's closest
+    // selector), so no ancestor re-walk happens here. membershipAbsent
+    // lets the per-frame renderer pass its already-computed state in;
+    // the event path omits it and reads once per event.
+    function classifyDrawerRow(row, membershipAbsent) {
+      const nameEl = row.querySelector('p');
+      const name = nameEl ? nameEl.textContent.trim() : null;
+      if (!name || !QUICK_LIST_NAMES.includes(name)) return { state: 'foreign' };
+      const parsed = parseDrawerLabel(row.getAttribute('label'));
+      const path = row.querySelector('path');
+      if (!parsed || !path) return { state: 'failed', reason: 'drawer-markup' };
+      if (!drawerContext) return { state: 'failed', reason: 'no-context' };
+      if (parsed.title !== drawerContext.title) return { state: 'failed', reason: 'drawer-title-mismatch' };
+      const absent = membershipAbsent !== undefined ? membershipAbsent : quickLists.membershipState() === 'absent';
+      const target = quickLists.getListTarget(name);
+      if (!target || absent) {
+        return { state: 'failed', reason: 'drawer-ownership-lost' };
+      }
+      return { state: 'owned', name, member: target.has(drawerContextKey()), parsed, path };
+    }
+
+    // Persistence gate: the drawer renders through healthy transients
+    // that mimic the render-facing failures (item-switch label lag,
+    // pre-resolution renders) and warnedTargets keys are page-lifetime,
+    // so a candidate matures only when the same row still shows the
+    // same failure WARN_SETTLE_MS after first seen. Registering a
+    // candidate schedules its own re-check scan, so delivery never
+    // depends on ambient churn reaching an idle page. The greyed and
+    // spinner re-arm arms are dropped (probe 2026-08-07: no carrier
+    // identified; spinner unrecorded), so the no-carrier residual in
+    // the spec applies: a transient outliving the gate burns the key.
+    function noteGatedWarn(row, reason, detail) {
+      const seen = warnCandidates.get(row);
+      if (!seen || seen.reason !== reason) {
+        warnCandidates.set(row, { reason, firstSeen: Date.now() });
+        setTimeout(queueScan, WARN_SETTLE_MS);
+        return;
+      }
+      if (Date.now() - seen.firstSeen < WARN_SETTLE_MS) return;
+      warnDrawerOnce(reason, detail);
+    }
+
+    function warnDrawerOnce(key, detail) {
+      if (warnedTargets.has(key)) return;
+      warnedTargets.add(key);
+      warn('Manage-lists drawer: ' + detail);
     }
 
     function teardownPopupEntries() {

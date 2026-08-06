@@ -1,5 +1,7 @@
 # Manage-lists row takeover
 
+Status: signed off 2026-08-06 21:43, content: 2c914614
+
 Script-owned truth for the Anticipated and Uninterested rows inside the
 app's Manage lists drawer, so the drawer stops misreporting quick-list
 membership after script quick-toggle writes. The script corrects the
@@ -66,6 +68,16 @@ All five formerly open questions were settled by direct probing:
   flow (Watchlist and personal lists alike) opens a
   `.trakt-modal` confirmation; adds apply immediately.
 
+Observed but not yet characterized (user report, 2026-08-06): the
+quick-list rows have shown transient render states between the first
+and second drawer open after a page load: greyed out (disabled) on
+the first open and enabled on the second, and occasionally a wrong
+background color on either open. Presumed cause is the app rendering
+rows before its membership query resolves. Which attribute or class
+carries the greyed state, whether that state also gates the app's
+own click handler, and what produces the wrong background color are
+unprobed (live-claim: provisional).
+
 ## Design
 
 All of this lives inside the existing quick-list-toggles IIFE,
@@ -118,8 +130,15 @@ bookmark path `fill` against engine membership and rewrites them on
 disagreement, preserving the app's exact label format. Both writes
 are attribute-only, so they cannot retrigger the shared childList
 body observer; the compare-then-write guard is still applied per the
-repo idempotence rule. `disabled`, `data-variant`, and row order are
-never touched. On scan with stale or absent membership data, call
+repo idempotence rule. On owned rows the renderer additionally clears
+the app's greyed/disabled state (whatever attribute or class the
+spec-gate probe identifies as its carrier): script truth does not
+depend on the app's query, so the rows are usable from the first
+open after a page load, and the visual affordance always agrees with
+the intercepted click. This clearing is predicate-gated like every
+other correction; a row the predicate does not own keeps its native
+disabled state untouched. `data-variant` and row order are never
+touched. On scan with stale or absent membership data, call
 `quickLists.refreshMembership()` (the menu-open heal precedent), so
 an open drawer heals itself without a /discover visit.
 
@@ -207,6 +226,11 @@ button opens the menu reliably).
   owned rows are corrected; verify the rows re-assert within a
   frame and no scan loop occurs (the loop guard being the
   attribute-only write discipline).
+- First-open state: after a full reload, open the drawer once; the
+  owned rows must be enabled and show engine truth even while the
+  app's membership query is unresolved, with no greyed or
+  wrong-background transient on them. Non-owned rows may still show
+  the app's native transients.
 
 `@version` bumps on release (Tampermonkey updates only on version
 increase).

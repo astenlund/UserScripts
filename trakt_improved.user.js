@@ -2166,6 +2166,12 @@
     // failure stamp and must not blank last-known-good text.
     function renderPlan(entry, kind) {
       if (!entry || !entry.rtPath) return '-';
+      // Uncertain verdicts never display scores: the fetched page may belong
+      // to a different title, and a silently wrong number is worse than the
+      // dash (the direct link stays, since a navigation is user-evaluable).
+      // The click-time confirm slice upgrades the verdict on a user ruling;
+      // cached scores then display immediately.
+      if (entry.rtVerified === 'uncertain') return '-';
       const scores = entry.rtScores;
       if (!scores || (scores.critics === null && scores.audience === null)) return null;
       const score = kind === 'critics' ? scores.critics : scores.audience;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.33
+// @version      1.34
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -2150,206 +2150,216 @@
 
     // ---- Score hydration ----------------------------------------------
 
-    // Hydration refetch gate (minus the nonempty-tracker check the caller
-    // owns): only fresh entries with a live path and null-or-stale scores.
-    // Expired or missing entries belong to resolveIds, whose completion
-    // rewrites the whole entry; fetching for them here would race it.
-    function hydrationFetchDue(entry, now) {
-      if (entryExpired(entry, now)) return false;
-      if (!entry.rtPath) return false;
-      return !entry.rtScores || typeof entry.rtScores.fetchedAt !== 'number' || now - entry.rtScores.fetchedAt > SCORE_TTL_MS;
-    }
-
-    // Per-tile render decision: returns the text to write, or null to leave
-    // the current text alone. A null score field on a parsed page renders as
-    // "-" (RT's definitive no-such-score); the all-null shape doubles as the
-    // failure stamp and must not blank last-known-good text.
-    function renderPlan(entry, kind) {
-      if (!entry || !entry.rtPath) return '-';
-      // Uncertain verdicts never display scores: the fetched page may belong
-      // to a different title, and a silently wrong number is worse than the
-      // dash (the direct link stays, since a navigation is user-evaluable).
-      // The click-time confirm slice upgrades the verdict on a user ruling;
-      // cached scores then display immediately.
-      if (entry.rtVerified === 'uncertain') return '-';
-      const scores = entry.rtScores;
-      if (!scores || (scores.critics === null && scores.audience === null)) return null;
-      if (kind !== 'critics' && kind !== 'audience') return null;
-      const score = kind === 'critics' ? scores.critics : scores.audience;
-      return score === null ? '-' : `${score}%`;
-    }
-
-    // Completion merge: write only hydration's fields onto the CURRENT
-    // entry; a vanished entry or changed path means a concurrent resolution
-    // owns the entry and the stale result is discarded (returns null).
-    // not-found demotes to the same five-field blank as resolution time.
-    function mergeHydration(current, rtPath, result, fetchStartedAt) {
-      if (!current || current.rtPath !== rtPath) return null;
-      if (result.status === 'ok') {
-        return { ...current, rtScores: { critics: result.data.critics, audience: result.data.audience, fetchedAt: fetchStartedAt } };
+    // Score-hydration engine: owns the tracked-tile registry for taken-over
+    // dead RT tiles plus the fetch-and-render cycle that keeps their score
+    // text current. scan() drives it through three entry points, in pass
+    // order: maintainTracker (sweep the registry against the live DOM and
+    // page key), trackTakenTiles (accumulate this pass's takeovers), and
+    // hydrateTiles (render tracked tiles and kick the throttled refetch).
+    const hydration = (function initScoreHydration() {
+      // Hydration refetch gate (minus the nonempty-tracker check the caller
+      // owns): only fresh entries with a live path and null-or-stale scores.
+      // Expired or missing entries belong to resolveIds, whose completion
+      // rewrites the whole entry; fetching for them here would race it.
+      function hydrationFetchDue(entry, now) {
+        if (entryExpired(entry, now)) return false;
+        if (!entry.rtPath) return false;
+        return !entry.rtScores || typeof entry.rtScores.fetchedAt !== 'number' || now - entry.rtScores.fetchedAt > SCORE_TTL_MS;
       }
-      if (result.status === 'not-found') {
-        return { ...current, rtPath: null, rtVerified: false, rtTitle: null, rtYear: null, rtScores: null };
+
+      // Per-tile render decision: returns the text to write, or null to leave
+      // the current text alone. A null score field on a parsed page renders as
+      // "-" (RT's definitive no-such-score); the all-null shape doubles as the
+      // failure stamp and must not blank last-known-good text.
+      function renderPlan(entry, kind) {
+        if (!entry || !entry.rtPath) return '-';
+        // Uncertain verdicts never display scores: the fetched page may belong
+        // to a different title, and a silently wrong number is worse than the
+        // dash (the direct link stays, since a navigation is user-evaluable).
+        // The click-time confirm slice upgrades the verdict on a user ruling;
+        // cached scores then display immediately.
+        if (entry.rtVerified === 'uncertain') return '-';
+        const scores = entry.rtScores;
+        if (!scores || (scores.critics === null && scores.audience === null)) return null;
+        if (kind !== 'critics' && kind !== 'audience') return null;
+        const score = kind === 'critics' ? scores.critics : scores.audience;
+        return score === null ? '-' : `${score}%`;
       }
-      return { ...current, rtScores: { critics: null, audience: null, fetchedAt: fetchStartedAt } };
-    }
 
-    // Taken-over dead RT tiles tracked for hydration, keyed by tile node.
-    // lastWritten is the exact string the script last wrote into the tile's
-    // value node (null until the first write); it is the authorship signal
-    // the maintenance drops and the takeover normalization key on. A Map,
-    // not a WeakMap: the per-pass sweep must iterate it.
-    const trackedTiles = new Map();
-    let trackedPageKey = null;
-
-    function valueNode(item) {
-      return item.querySelector('.rating-value p');
-    }
-
-    function tileKind(item) {
-      const svg = item.querySelector('svg');
-      return svg ? RT_TILE_KINDS[svg.getAttribute('viewBox')] ?? null : null;
-    }
-
-    function readTileText(vp) {
-      return vp.textContent.trim();
-    }
-
-    // Foreign text: neither the dash placeholder nor the script's own last
-    // write -- the app has repatched the tile with its own data.
-    function hasForeignText(vp, record) {
-      const text = readTileText(vp);
-      return text !== '-' && text !== record.lastWritten;
-    }
-
-    // Pinned write mechanism: every probed value node holds exactly one text
-    // node, so mutate its data in place -- a characterData mutation the body
-    // observer (childList only) never fires on, and one that keeps Svelte's
-    // bound text node attached so app repatches stay visible to reads. The
-    // textContent fallback (childList, observed once per change thanks to
-    // the compare guard) covers markup drift at the accepted cost of
-    // detaching the binding for that tile.
-    function writeTileText(item, text) {
-      const vp = valueNode(item);
-      if (!vp) return;
-      if (readTileText(vp) === text) return;
-      if (vp.childNodes.length === 1 && vp.firstChild.nodeType === Node.TEXT_NODE) {
-        vp.firstChild.data = text;
-      } else {
-        vp.textContent = text;
+      // Completion merge: write only hydration's fields onto the CURRENT
+      // entry; a vanished entry or changed path means a concurrent resolution
+      // owns the entry and the stale result is discarded (returns null).
+      // not-found demotes to the same five-field blank as resolution time.
+      function mergeHydration(current, rtPath, result, fetchStartedAt) {
+        if (!current || current.rtPath !== rtPath) return null;
+        if (result.status === 'ok') {
+          return { ...current, rtScores: { critics: result.data.critics, audience: result.data.audience, fetchedAt: fetchStartedAt } };
+        }
+        if (result.status === 'not-found') {
+          return { ...current, rtPath: null, rtVerified: false, rtTitle: null, rtYear: null, rtScores: null };
+        }
+        return { ...current, rtScores: { critics: null, audience: null, fetchedAt: fetchStartedAt } };
       }
-      const record = trackedTiles.get(item);
-      if (record) {
-        record.lastWritten = text;
-      }
-    }
 
-    // Per-pass tracker maintenance; runs before the takeover call and before
-    // any writer. On a page-key change: reset the script's own text (guarded
-    // by lastWritten; app-repatched text is left alone) and forget everything
-    // (Svelte reuses row nodes across SPA navigations). Same key: drop
-    // disconnected tiles, tiles the app reclaimed (foreign text), tiles that
-    // stopped being RT tiles (viewBox left the pair), and tiles whose value
-    // node vanished (markup drift degrades to unhydrated, never throws).
-    function maintainTracker(pageKey) {
-      if (pageKey !== trackedPageKey) {
+      // Taken-over dead RT tiles tracked for hydration, keyed by tile node.
+      // lastWritten is the exact string the script last wrote into the tile's
+      // value node (null until the first write); it is the authorship signal
+      // the maintenance drops and the takeover normalization key on. A Map,
+      // not a WeakMap: the per-pass sweep must iterate it.
+      const trackedTiles = new Map();
+      let trackedPageKey = null;
+
+      function valueNode(item) {
+        return item.querySelector('.rating-value p');
+      }
+
+      function tileKind(item) {
+        const svg = item.querySelector('svg');
+        return svg ? RT_TILE_KINDS[svg.getAttribute('viewBox')] ?? null : null;
+      }
+
+      function readTileText(vp) {
+        return vp.textContent.trim();
+      }
+
+      // Foreign text: neither the dash placeholder nor the script's own last
+      // write -- the app has repatched the tile with its own data.
+      function hasForeignText(vp, record) {
+        const text = readTileText(vp);
+        return text !== '-' && text !== record.lastWritten;
+      }
+
+      // Pinned write mechanism: every probed value node holds exactly one text
+      // node, so mutate its data in place -- a characterData mutation the body
+      // observer (childList only) never fires on, and one that keeps Svelte's
+      // bound text node attached so app repatches stay visible to reads. The
+      // textContent fallback (childList, observed once per change thanks to
+      // the compare guard) covers markup drift at the accepted cost of
+      // detaching the binding for that tile.
+      function writeTileText(item, text) {
+        const vp = valueNode(item);
+        if (!vp) return;
+        if (readTileText(vp) === text) return;
+        if (vp.childNodes.length === 1 && vp.firstChild.nodeType === Node.TEXT_NODE) {
+          vp.firstChild.data = text;
+        } else {
+          vp.textContent = text;
+        }
+        const record = trackedTiles.get(item);
+        if (record) {
+          record.lastWritten = text;
+        }
+      }
+
+      // Per-pass tracker maintenance; runs before the takeover call and before
+      // any writer. On a page-key change: reset the script's own text (guarded
+      // by lastWritten; app-repatched text is left alone) and forget everything
+      // (Svelte reuses row nodes across SPA navigations). Same key: drop
+      // disconnected tiles, tiles the app reclaimed (foreign text), tiles that
+      // stopped being RT tiles (viewBox left the pair), and tiles whose value
+      // node vanished (markup drift degrades to unhydrated, never throws).
+      function maintainTracker(pageKey) {
+        if (pageKey !== trackedPageKey) {
+          for (const [item, record] of trackedTiles) {
+            if (!item.isConnected || record.lastWritten === null) continue;
+            const vp = valueNode(item);
+            if (vp && readTileText(vp) === record.lastWritten) {
+              writeTileText(item, '-');
+            }
+          }
+          trackedTiles.clear();
+          trackedPageKey = pageKey;
+          return;
+        }
         for (const [item, record] of trackedTiles) {
-          if (!item.isConnected || record.lastWritten === null) continue;
+          if (!item.isConnected) {
+            trackedTiles.delete(item);
+            continue;
+          }
           const vp = valueNode(item);
-          if (vp && readTileText(vp) === record.lastWritten) {
+          if (!vp) {
+            warn('Tracked RT tile lost its value node; dropping it from hydration');
+            trackedTiles.delete(item);
+            continue;
+          }
+          if (!tileKind(item)) {
+            trackedTiles.delete(item);
+            continue;
+          }
+          if (hasForeignText(vp, record)) {
+            trackedTiles.delete(item);
+          }
+        }
+      }
+
+      // Insert-if-absent accumulation plus the takeover normalization: foreign
+      // score text on a just-taken tile is reset to "-" (on a cross-title
+      // re-take the page-key clear has already emptied the tracker, so any
+      // surviving score text is foreign by definition); the node's own
+      // lastWritten text survives a same-title re-take.
+      function trackTakenTiles(taken) {
+        for (const item of taken) {
+          let record = trackedTiles.get(item);
+          if (!record) {
+            record = { lastWritten: null };
+            trackedTiles.set(item, record);
+          }
+          const vp = valueNode(item);
+          if (vp && hasForeignText(vp, record)) {
             writeTileText(item, '-');
           }
         }
-        trackedTiles.clear();
-        trackedPageKey = pageKey;
-        return;
       }
-      for (const [item, record] of trackedTiles) {
-        if (!item.isConnected) {
-          trackedTiles.delete(item);
-          continue;
-        }
-        const vp = valueNode(item);
-        if (!vp) {
-          warn('Tracked RT tile lost its value node; dropping it from hydration');
-          trackedTiles.delete(item);
-          continue;
-        }
-        if (!tileKind(item)) {
-          trackedTiles.delete(item);
-          continue;
-        }
-        if (hasForeignText(vp, record)) {
-          trackedTiles.delete(item);
-        }
-      }
-    }
 
-    // Insert-if-absent accumulation plus the takeover normalization: foreign
-    // score text on a just-taken tile is reset to "-" (on a cross-title
-    // re-take the page-key clear has already emptied the tracker, so any
-    // surviving score text is foreign by definition); the node's own
-    // lastWritten text survives a same-title re-take.
-    function trackTakenTiles(taken) {
-      for (const item of taken) {
-        let record = trackedTiles.get(item);
-        if (!record) {
-          record = { lastWritten: null };
-          trackedTiles.set(item, record);
+      const hydrationInFlight = new Set();
+
+      // Fire-and-forget score refresh, mirroring resolveIds: dedup while in
+      // flight, merge-write on completion, queueScan so the scores reach the
+      // DOM without waiting for an app-driven mutation. fetchRtPage never
+      // throws (four-state result), so the catch mirrors resolveIds' shape
+      // purely defensively.
+      function hydrateScores(key, rtPath) {
+        if (hydrationInFlight.has(key)) return;
+        hydrationInFlight.add(key);
+        (async () => {
+          const fetchStartedAt = Date.now();
+          const result = await fetchRtPage(rtPath);
+          const merged = mergeHydration(cacheGet(key), rtPath, result, fetchStartedAt);
+          if (!merged) return;
+          if (result.status === 'not-found') {
+            warn(`RT path ${rtPath} dead for ${key}; demoting to title search (not-found)`);
+          }
+          cachePut(key, merged);
+          queueScan();
+        })().catch(e => {
+          warn(`Score hydration failed for ${key}`, e);
+        }).finally(() => hydrationInFlight.delete(key));
+      }
+
+      // Render pass over the tracked set plus the throttled refetch. Kind is
+      // derived from each tile's CURRENT svg viewBox at write time, never
+      // snapshotted: node reuse can shift a tracked node's tile identity under
+      // an unchanged page key, and a snapshot would hydrate a repatched node
+      // from a stale kind. renderPlan returning null means leave the text
+      // alone (unknown verdict or failure stamp).
+      function hydrateTiles(key) {
+        if (trackedTiles.size === 0) return;
+        const entry = cacheGet(key);
+        for (const [item] of trackedTiles) {
+          const kind = tileKind(item);
+          if (!kind) continue;
+          const target = renderPlan(entry, kind);
+          if (target !== null) {
+            writeTileText(item, target);
+          }
         }
-        const vp = valueNode(item);
-        if (vp && hasForeignText(vp, record)) {
-          writeTileText(item, '-');
+        if (hydrationFetchDue(entry, Date.now())) {
+          hydrateScores(key, entry.rtPath);
         }
       }
-    }
 
-    const hydrationInFlight = new Set();
-
-    // Fire-and-forget score refresh, mirroring resolveIds: dedup while in
-    // flight, merge-write on completion, queueScan so the scores reach the
-    // DOM without waiting for an app-driven mutation. fetchRtPage never
-    // throws (four-state result), so the catch mirrors resolveIds' shape
-    // purely defensively.
-    function hydrateScores(key, rtPath) {
-      if (hydrationInFlight.has(key)) return;
-      hydrationInFlight.add(key);
-      (async () => {
-        const fetchStartedAt = Date.now();
-        const result = await fetchRtPage(rtPath);
-        const merged = mergeHydration(cacheGet(key), rtPath, result, fetchStartedAt);
-        if (!merged) return;
-        if (result.status === 'not-found') {
-          warn(`RT path ${rtPath} dead for ${key}; demoting to title search (not-found)`);
-        }
-        cachePut(key, merged);
-        queueScan();
-      })().catch(e => {
-        warn(`Score hydration failed for ${key}`, e);
-      }).finally(() => hydrationInFlight.delete(key));
-    }
-
-    // Render pass over the tracked set plus the throttled refetch. Kind is
-    // derived from each tile's CURRENT svg viewBox at write time, never
-    // snapshotted: node reuse can shift a tracked node's tile identity under
-    // an unchanged page key, and a snapshot would hydrate a repatched node
-    // from a stale kind. renderPlan returning null means leave the text
-    // alone (unknown verdict or failure stamp).
-    function hydrateTiles(key) {
-      if (trackedTiles.size === 0) return;
-      const entry = cacheGet(key);
-      for (const [item] of trackedTiles) {
-        const kind = tileKind(item);
-        if (!kind) continue;
-        const target = renderPlan(entry, kind);
-        if (target !== null) {
-          writeTileText(item, target);
-        }
-      }
-      if (hydrationFetchDue(entry, Date.now())) {
-        hydrateScores(key, entry.rtPath);
-      }
-    }
+      return { maintainTracker, trackTakenTiles, hydrateTiles };
+    })();
 
     function scan() {
       const page = pageContext();
@@ -2359,7 +2369,7 @@
       const title = pageTitle();
       if (!title) return;
       const key = `${page.type}:${page.slug}`;
-      maintainTracker(key);
+      hydration.maintainTracker(key);
       const entry = cacheGet(key);
       if (entryExpired(entry, Date.now())) {
         resolveIds(page.type, page.slug);
@@ -2370,8 +2380,8 @@
       rewriteRtAnchors(rt);
       const templateTile = row.querySelector(`rating:not(.${CHIP_CLASS})`);
       if (!templateTile) return;
-      trackTakenTiles(takeOverDeadRtTiles(row, rt));
-      hydrateTiles(key);
+      hydration.trackTakenTiles(takeOverDeadRtTiles(row, rt));
+      hydration.hydrateTiles(key);
       // A rewritten or taken-over native RT tile already links right, so the
       // icon-only chip is a legacy fallback for rows with no RT tiles at all
       // (current app markup always renders the pair, dead or alive).

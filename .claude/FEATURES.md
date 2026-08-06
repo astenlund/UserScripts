@@ -198,11 +198,8 @@ serve JSON-LD (name, dateCreated) plus a scorecard JSON
   uncertain RT anchor: open (user-verified) or not-it (demote to
   search); user rulings carry forward across TTL refetches of the
   same path.
-- **Score hydration.** Render tracked taken-over tiles' scores via a
-  closure-state tile tracker (identity-deduped, isConnected-filtered,
-  cleared on page-key change), 24h staleness refetch with in-flight
-  dedup and a fetchedAt stamp written even on failure, idempotent
-  text writes.
+- ~~**Score hydration.**~~ (Shipped 2026-08-06 in Trakt Improved
+  1.33 -- see FEATURES_HISTORY.md.)
 
 **Requires:** none.
 

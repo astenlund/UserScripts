@@ -82,3 +82,21 @@ what already shipped, not to resolve dependencies.
   autosquash); e2e-verified live with a namespaced page-context build
   (all verdict bands, warn payloads, backoff independence, v1 to v2
   cache migration, anchor flip both directions).
+- [RT page bridge: Score hydration](features/rt-page-bridge.md):
+  taken-over dead RT tiles now render real critic/audience scores
+  from the cached rtScores field (tomato = critics, popcorn =
+  audience, kind derived from the svg viewBox at write time). A Map
+  tracker (node -> lastWritten) with fixed per-pass order
+  (maintenance, takeover, hydration) guards authorship across Svelte
+  node reuse; tile text is written by mutating the value node's
+  single text node (characterData, invisible to the childList body
+  observer); scores refresh on a 24h cadence through fetchRtPage
+  with in-flight dedup, merge-writes, a stamped-on-failure gate, and
+  a not-found demotion to the five-field blank. Shipped 2026-08-06
+  in Trakt Improved 1.33 (commits 780d230..c19b9ec plus review
+  refactor c303704); e2e-verified live with a namespaced synthetic-row
+  build (gate matrix bands a-i, SPA-navigation ordering, valueless
+  drop, tracker re-take/foreign-text/viewBox drops, guarded page-key
+  reset, zero-mutation observer guard, show-page context). One
+  residual: dead-form tile markup on a genuine show page stays a
+  provisional live-claim in the spec (no specimen existed to probe).

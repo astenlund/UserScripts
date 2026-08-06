@@ -182,9 +182,13 @@ for the click-time confirm slice.
   further entry widening. (Where the slice persists a not-it ruling
   across TTL refetches is that slice's own open design question;
   additive options exist that need no wipe.) The direct link keeps being
-  served; the score hydration slice's verdict-agnostic gate treats
-  the entry like an unknown one (its scores follow the served
-  link's fate). The verdict is re-derived at the next TTL refetch
+  served; the score hydration slice's verdict-agnostic FETCH gate
+  treats the entry like an unknown one (scores are fetched and
+  cached), but its render shows "-" while the verdict is uncertain
+  (user ruling 2026-08-06: a silently wrong painted number is worse
+  than the dash, while the direct link stays because a navigation
+  is user-evaluable; a confirm-slice 'user' ruling displays the
+  cached scores immediately). The verdict is re-derived at the next TTL refetch
   like any other; carry-forward of user rulings across refetches
   belongs to the click-time confirm slice.
 - mismatch: store `rtPath: null` (the search fallback takes over
@@ -234,10 +238,14 @@ match-only (one uniform rule across the non-match verdicts), at the
 cost of one deduped hydration fetch of the same page on the first
 tracked scan. Hydration-side storage is, by contrast, deliberately
 verdict-agnostic: an unknown-verdict entry's direct link is already
-being served, and its scores follow the served link's fate. Do not
-"harden" the hydration gate with an `rtVerified === 'auto'`
+being served, and its scores follow the served link's fate; an
+uncertain-verdict entry's scores are fetched and cached but not
+displayed (see the render rule's uncertain branch). Do not
+"harden" the hydration FETCH gate with an `rtVerified === 'auto'`
 condition; that would starve every unknown- and uncertain-verdict
-title of scores until the ~30-day TTL.
+title of scores until the ~30-day TTL (unknown entries would lose
+their display, and uncertain entries would lose the warm cache the
+confirm slice's 'user' ruling displays instantly).
 
 Entries whose `rtPath` is null (mismatch or not-found demotion
 above, or the pre-existing Wikidata-has-no-path case) store
@@ -554,7 +562,16 @@ untouched:
   the write target is "-" for every tracked tile -- the
   compare-before-write keeps the reset idempotent, and it clears
   previously rendered scores that a demotion has just disowned,
-  which "leave unchanged" would wrongly keep on display; when
+  which "leave unchanged" would wrongly keep on display; when the
+  entry's verdict is `uncertain`, the write target is likewise "-"
+  for every tracked tile (user ruling 2026-08-06, amending the
+  original display-follows-link symmetry: the fetched page may
+  belong to a different work, and a silently painted wrong number
+  is worse than the dash, while the direct link stays because a
+  navigation is user-evaluable; the "-" also clears scores rendered
+  before a TTL refetch downgraded the verdict, and cached scores
+  display immediately once the confirm slice records a 'user'
+  ruling); when
   `rtScores` is null (unknown verdict) or is the all-null failure
   stamp, leave the current text alone, so a transient refresh
   failure does not blank last-known-good scores for up to 24h;
@@ -790,7 +807,10 @@ explicitly.
   strand the new pair unhydrated); (k) a tracked tile whose
   `.rating-value p` node is removed: the tile is dropped with a
   `warn`, no exception propagates, and the pass's remaining
-  features (chip management included) still run.
+  features (chip management included) still run; (l) an
+  uncertain-verdict entry with cached numeric `rtScores`: both
+  tiles render "-" (never the cached numbers), while the fetch
+  gate still follows its own conditions for the entry.
 - Tracker behavior: takeover returns its processed tiles and the
   tracker dedupes by node identity across passes; every write
   derives the tile's kind from its current svg viewBox (band (a)
@@ -844,3 +864,4 @@ explicitly.
 - handover completed 2026-08-05 21:59 at 3e630cd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: 5f31bedc
 - revise-spec refreshed 2026-08-05 23:07 at 56386fd, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (MVP), Slices/MVP bullet, content: a6ec064f (live-claim probes settled in the field)
 - revise-spec graduated 2026-08-06 01:30 at 9ce6fd3, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (score hydration), Slices/score-hydration bullet, Open questions/display-parity bullet, content: c33383dd
+- revise-spec refreshed 2026-08-06 17:05 at cb532a7, scope: sections Mechanism, Cache entry changes and their consumers, Verification plan (score hydration), Slices/score-hydration bullet, Open questions/display-parity bullet, content: a2df5f88 (uncertain-verdict render ruling)

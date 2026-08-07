@@ -131,10 +131,17 @@ Re-probed 2026-08-07 (pre-implementation probe, items (a)-(d)):
   session (trusted clicks were required to open both the menus and
   the drawer), unlike the 2026-08-05 record; e2e drives these
   surfaces with trusted clicks.
-- Not probed: the item-icon spinner's markup (its probe requires a
-  native toggle, a server write, out of scope for observation-only
-  probing); the spinner re-arm arm is dropped per its stated
-  fallback pending that recording.
+- Spinner markup (probed 2026-08-07 during the user-authorized
+  native toggle pair): the app inserts `div.loading-indicator`
+  into the row's `div.item-icon` and REMOVES the bookmark `svg`
+  for the toggle's duration (about 700 ms), then restores it. The
+  spinner contributes a `path` of its own and the row `label` is
+  untouched throughout, so the ownership predicate's generic
+  `path` check and label parse both hold across the window: the
+  spinner cannot register a `drawer-markup` candidate at all, and
+  the spinner re-arm arm is unnecessary rather than merely
+  dropped. (This also empirically vindicates the generic `path`
+  selector over the class-qualified form.)
 
 ## Design
 
@@ -256,13 +263,12 @@ a matching title whose target de-resolved or whose membership data
 went absent is an ownership loss and raises `drawer-ownership-lost`
 via the unwind. Exactly one warn key fires per failure. The two
 render-facing keys (`drawer-markup`, `drawer-title-mismatch`) are
-persistence-gated: the drawer renders through three known healthy
+persistence-gated: the drawer renders through known healthy
 transients that match their triggers (the item-switch window,
 where a freshly captured context precedes the app's per-item row
-re-render; the pre-resolution window, where labels may not yet
-parse; and the app's item-icon spinner during its own toggles on
-non-owned rows, which may transiently displace the bookmark path,
-its exact effect on the path node being unrecorded), and
+re-render, and the pre-resolution window, where labels may not yet
+parse; the app's item-icon spinner was probed 2026-08-07 and
+cannot trigger these keys at all, see Probed ground truth), and
 `warnedTargets` keys are page-lifetime, so a spurious
 fire would permanently silence the diagnostic. A candidate for
 these keys therefore fires only when the same row still exhibits
@@ -277,11 +283,8 @@ time-bound, so the re-check must not fire on a row that is still
 visibly loading: at the re-check, a row still carrying the
 identified greyed-state carrier (the app's own not-ready signal;
 when the probe identifies a class token rather than an attribute,
-the check reads `classList.contains`) or currently hosting the app
-spinner in its `div.item-icon` (detector specified against probe
-item (b)'s spinner recording; if the probe cannot pin one, the
-spinner arm is dropped and its window joins the accepted residual
-class) re-arms the candidate for another
+the check reads `classList.contains`) re-arms the candidate for
+another
 `WARN_SETTLE_MS` instead of firing, and re-arming reschedules the
 one-shot `setTimeout(queueScan, WARN_SETTLE_MS)` along with the
 deadline, so delivery never depends on ambient churn; a candidate
@@ -710,3 +713,5 @@ the open features.
 - revise-spec graduated 2026-08-07 00:15 at e89c3bb, scope: whole file, content: c6ee0b17 (Completeness at cap: final fix applied unverified)
 - revise-spec refreshed 2026-08-07 00:27 at 2d6489e, scope: whole file, content: 823267cf (live-claim fold-back)
 - revise-spec refreshed 2026-08-07 01:07 at 01673be, scope: whole file, content: 01ebea9e (spec reconciliation)
+- revise-spec refreshed 2026-08-07 11:00 at fbb72f4, scope: whole file, content: 8c42b769 (live-claim fold-back)
+- handover completed 2026-08-07 11:00 at fbb72f4, scope: whole file, content: 8c42b769

@@ -203,6 +203,21 @@ serve JSON-LD (name, dateCreated) plus a scorecard JSON
 
 **Requires:** none.
 
+## Lists
+
+### [Universal one-click removes](features/universal-one-click-removes.md)
+
+Suppress the app's remove-from-list confirmation everywhere
+(Watchlist, personal lists, drawer native rows) by auto-confirming
+the modal invisibly: the app keeps its own write path and cache
+invalidation, so no staleness handling is needed, and detection
+misses fail open to today's visible dialog. Scope (universal, no
+flash) and mechanism (auto-confirm over ownership extension) are
+user rulings from 2026-08-07; modal-variant probes across surfaces
+are the pre-implementation work.
+
+**Requires:** none.
+
 ## Exploring
 
 Pre-dependency-analysis brainstorms live here. An entry is a draft

@@ -42,7 +42,16 @@ consult `BUGS_HISTORY.md`.
 
 ## Open
 
-No open bugs.
+### RT score hydration can break Trakt's Svelte page hydration
+
+Reported on `https://app.trakt.tv/movies/super-troopers-3-2026` while
+the Rotten Tomatoes rating tiles were being hydrated. Trakt logs
+`Failed to hydrate: TypeError: e.removeAttribute is not a function`
+from `+layout.svelte:96`. Investigate whether `trakt_improved.user.js`
+mutates an app-owned rating node before Svelte finishes hydrating it;
+the cause is not yet confirmed.
+
+**Requires:** none.
 
 ## History
 

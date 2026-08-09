@@ -42,6 +42,16 @@ consult `BUGS_HISTORY.md`.
 
 ## Open
 
+### RT score hydration uses the fresh icon for rotten scores
+
+Reported on Ice Cream Man (2026). Trakt Improved renders a tomato icon
+beside the 27% Rotten Tomatoes critic score, while the Rotten Tomatoes
+page classifies the score as Rotten and renders the green splat icon.
+Render the Rotten icon when the hydrated critic score is classified as
+Rotten; the observed mismatch is on the summary rating tile.
+
+**Requires:** none.
+
 ### RT score hydration can break Trakt's Svelte page hydration
 
 Reported on `https://app.trakt.tv/movies/super-troopers-3-2026` while

@@ -42,6 +42,18 @@ consult `BUGS_HISTORY.md`.
 
 ## Open
 
+### Summary-page quick-list rows stay greyed out until Manage lists opens
+
+On a single movie or show details page, the script-owned
+`data-qlt-entry` rows for Anticipated and Uninterested remain visually
+greyed out until the Manage lists panel has been opened once. It is not
+yet known whether this reproduces on every cold details-page load or
+only under some timing conditions. Identify the disabled-state carrier
+and determine whether opening the panel initializes membership or
+rendering state that subsequently heals the summary-menu rows.
+
+**Requires:** none.
+
 ### RT score hydration uses the fresh icon for rotten scores
 
 Reported on Ice Cream Man (2026). Trakt Improved renders a tomato icon

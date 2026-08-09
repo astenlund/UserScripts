@@ -49,7 +49,9 @@ the Rotten Tomatoes rating tiles were being hydrated. Trakt logs
 `Failed to hydrate: TypeError: e.removeAttribute is not a function`
 from `+layout.svelte:96`. Investigate whether `trakt_improved.user.js`
 mutates an app-owned rating node before Svelte finishes hydrating it;
-the cause is not yet confirmed.
+the cause is not yet confirmed. Refreshing the page cleared the failure,
+which makes an initialization-order timing issue highly likely and
+strengthens the early DOM mutation hypothesis.
 
 **Requires:** none.
 

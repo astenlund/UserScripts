@@ -77,6 +77,17 @@ strengthens the early DOM mutation hypothesis.
 
 **Requires:** none.
 
+### [Fade filters lost their filter-pane anchor](bugs/fade-filters-pane-anchor-lost.md)
+
+trakt.tv redesigned the filters panel (2026-08-11), so the injected
+Fade section no longer renders: `ensureFadeSection`'s clone source
+`div.trakt-display-section` no longer matches and the function returns
+early without warning. Card fading still runs from saved state, but the
+pane's fade toggles (and the Started-row mode hiding) are gone. Full
+anchor surface and fix path in the bug file.
+
+**Requires:** none.
+
 ## History
 
 Fixed bugs are archived in [`BUGS_HISTORY.md`](BUGS_HISTORY.md), loaded

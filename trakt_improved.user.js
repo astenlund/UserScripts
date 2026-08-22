@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.35
-// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, and swimlane scrollbar fixes.
+// @version      1.36
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @match        https://app.trakt.tv/*
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
@@ -15,7 +15,7 @@
 // @connect      www.rottentomatoes.com
 // ==/UserScript==
 
-(function () {
+(async function () {
   'use strict';
 
   // With GM grants the script runs in the manager's sandbox, where `window`
@@ -23,6 +23,47 @@
   // unsafeWindow to reach the real page. Falls back to window when injected
   // without a sandbox.
   const pageWindow = typeof unsafeWindow === 'object' ? unsafeWindow : window;
+
+  // ---------------------------------------------------------------------
+  // Service worker bypass
+  // ---------------------------------------------------------------------
+
+  // The app's Workbox service worker routes navigations through a
+  // StaleWhileRevalidate cache, and a cache miss (a link opened in a new
+  // tab, or the first reload after an SPA navigation changed the URL)
+  // deterministically yields a bodiless HTTP 503 that Chrome renders as
+  // its own error page; reloading the same URL once heals that URL only.
+  // Reproduced 2026-08-22 with the script disabled, so the defect is the
+  // app's. Bypass: refuse registration on the page before the app's own
+  // startup can call it (the app registers on window load; running the
+  // whole script at document-start puts the override ahead of that
+  // deterministically), and unregister whatever an earlier load left
+  // behind. Verified live 2026-08-22: after unregistering, a new tab and
+  // a reload of the formerly controlled tab both navigated without the
+  // worker (PerformanceNavigationTiming.workerStart 0), so the bypass
+  // takes effect from the first load; only the page that did the
+  // unregistering stays controlled until it navigates. Accepted cost:
+  // navigator.serviceWorker.ready never settles for the app, so anything
+  // it gates on readiness (install prompt, push) silently never runs. The
+  // override returns a never-settling promise for the same reason: a
+  // rejection would surface as an unhandled rejection in the app's
+  // registration path, and nothing awaits it. This block must stay ahead
+  // of the DOMContentLoaded gate below.
+  (function bypassServiceWorker() {
+    const container = pageWindow.ServiceWorkerContainer;
+    const serviceWorker = pageWindow.navigator.serviceWorker;
+    if (!container || !serviceWorker) return;
+    container.prototype.register = () => new Promise(() => {});
+    serviceWorker.getRegistrations()
+      .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
+      .catch(e => warn('Service worker unregistration failed; bypass takes effect on a later load', e));
+  })();
+
+  // Everything below was written against document-idle: it reads the DOM
+  // at init and observes document.body. Resume at the equivalent point.
+  if (document.readyState === 'loading') {
+    await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+  }
 
   // ---------------------------------------------------------------------
   // Shared plumbing

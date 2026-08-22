@@ -126,3 +126,34 @@ the RT page bridge feature). E2e-verified via a namespaced tel2 bundle
 injected alongside the installed 1.30 copy: both dead tiles taken over
 with direct RT links in full color, zero RT chips from either
 instance, and live-RT pages (Inception, Breaking Bad) untouched.
+
+### New-tab links and post-navigation reloads hit a bodiless HTTP 503
+
+Reported and worked around 2026-08-22 (Trakt Improved 1.36). Opening
+any not-yet-visited app.trakt.tv link in a new tab, or reloading right
+after an SPA navigation changed the URL, deterministically produced
+Chrome's own "HTTP ERROR 503" page; reloading the same URL once healed
+that URL only. First suspected to be the script (the membership sweep
+burst, the fetch hook, link rewriting), all ruled out live: one sweep is
+about 23 requests per 15 minutes shared across tabs, the fetch hook is a
+pass-through, and no listener touches card or actor links. The user's
+A/B with the script disabled reproduced the 503, so the defect is the
+app's: its Workbox service worker (`/service-worker.js`) serves
+navigations through a StaleWhileRevalidate cache keyed on the URL plus
+`__auth`/`__locale`, and the cache-miss path is what fails. DevTools'
+"Bypass for network" confirmed the worker as the culprit but only holds
+while DevTools is open. Fix shipped as a bypass inside the script: the
+whole script now runs at `document-start` (the outer IIFE became async
+and awaits `DOMContentLoaded` before the document-idle-era features
+run), overrides `ServiceWorkerContainer.prototype.register` on the page
+with a never-settling promise so the app cannot re-register, and
+unregisters existing registrations. The app registers on window load,
+so the override lands first deterministically. Verified live the same
+day: after unregistering, both a new tab and a reload of the formerly
+controlled tab navigated without the worker
+(`PerformanceNavigationTiming.workerStart` 0), so the bypass takes
+effect from the first 1.36 load; only the page that did the
+unregistering stays controlled until it navigates. Accepted cost,
+documented at the bypass: `navigator.serviceWorker.ready` never settles
+for the app, so its install prompt and anything else gated on worker
+readiness silently never runs.

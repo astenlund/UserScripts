@@ -439,8 +439,10 @@ untouched:
   once per anomaly. (The class/href dimension of node
   reuse was e2e-probed 2026-08-04 with a dead-to-dead SPA
   navigation under the shipped takeover: the end state self-heals,
-  since a surviving RT href is re-synced by rewriteRtAnchors and a
-  restored dead form is re-taken. Text survival cannot be probed
+  since a surviving RT href was re-synced by rewriteRtAnchors and a
+  restored dead form is re-taken; since 1.37 the summary row carries
+  no per-tile hrefs at all and the click router resolves the URL at
+  click time, so only the dead-form re-take remains relevant. Text survival cannot be probed
   until scores exist to write, hence the two guards. A related
   non-hole, settled by the same probe: the takeover selector's
   `:not(.has-valid-rating)` self-exclusion does not strand reused

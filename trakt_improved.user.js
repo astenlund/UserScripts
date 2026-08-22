@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.36
-// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), deterministic Rotten Tomatoes and Letterboxd links, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
+// @version      1.37
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1663,20 +1663,27 @@
 
   // ---------------------------------------------------------------------
   // Feature: external links
-  // Replaces unreliable native Rotten Tomatoes links with deterministic
-  // direct links (Wikidata bridges IMDb id to RT path), takes over the dead
-  // grayscale RT placeholder tiles as live links, and adds a Letterboxd
-  // chip on movie pages, with title-search fallback throughout.
+  // Routes clicks on the summary ratings row per tile (IMDb tile to IMDb,
+  // Rotten Tomatoes tiles to a deterministic RT link bridged from the IMDb
+  // id via Wikidata, chevron and the rest to the app's ratings drawer),
+  // rewrites the unreliable native RT links in the Ratings drawer, revives
+  // the dead grayscale RT placeholder tiles, and adds a Letterboxd chip on
+  // movie pages, with title-search fallback throughout.
   // ---------------------------------------------------------------------
 
   (function initExternalLinks() {
     const CHIP_CLASS = 'tel-chip';
     const KIND_ATTR = 'data-tel-kind';
-    const ROW_SELECTOR = '.trakt-summary-ratings';
-    // Native Rotten Tomatoes links appear in the visible ratings row and in the
-    // Ratings drawer (view=ratings); both get rewritten. Letterboxd links in the
-    // drawer are direct and correct when present, so they are left alone.
-    const REWRITE_SCOPES = `${ROW_SELECTOR}, .trakt-ratings-drawer-content`;
+    // The Ratings drawer nests its own .trakt-summary-ratings grid, so the
+    // header qualifier keeps the row logic off the drawer's copy.
+    const ROW_SELECTOR = '.trakt-summary-header .trakt-summary-ratings';
+    // The summary row wraps all its tiles in ONE app-owned drilldown anchor
+    // (href ?view=ratings) with no per-tile links, so its tiles are routed by
+    // the click handler below instead of by href rewrites. The Ratings drawer
+    // (view=ratings) still renders per-tile native anchors, and its RT ones
+    // get rewritten. Letterboxd links in the drawer are direct and correct
+    // when present, so they are left alone.
+    const REWRITE_SCOPE = '.trakt-ratings-drawer-content';
     const RT_HREF_MATCH = 'a[href*="rottentomatoes."]';
     const CACHE_KEY = 'trakt-external-links-cache';
     const CACHE_VERSION = 2;
@@ -2062,6 +2069,10 @@
       return entry?.rtPath ? 'https://www.rottentomatoes.com/' + entry.rtPath : rtSearchUrl(title);
     }
 
+    function imdbUrl(entry, title) {
+      return entry?.imdb ? 'https://www.imdb.com/title/' + entry.imdb + '/' : 'https://www.imdb.com/find/?q=' + encodeURIComponent(title);
+    }
+
     // Letterboxd's official id-redirect routes: /imdb/<id> and /tmdb/<id>
     // land directly on the film page.
     function lbUrl(entry, title) {
@@ -2086,7 +2097,7 @@
     // original hrefs; the observer rescan puts ours back, and the equality
     // check in syncHref keeps the pass idempotent.
     function rewriteRtAnchors(url) {
-      for (const scope of document.querySelectorAll(REWRITE_SCOPES)) {
+      for (const scope of document.querySelectorAll(REWRITE_SCOPE)) {
         for (const anchor of scope.querySelectorAll(RT_HREF_MATCH)) {
           if (!anchor.closest('.' + CHIP_CLASS)) {
             syncHref(anchor, url);
@@ -2095,41 +2106,36 @@
       }
     }
 
-    // Dead native RT tiles are placeholders the app renders when it has no
-    // score: a "-" value, a trakt-no-link anchor pointing back at the title
-    // page, and a grayscaled icon. Their hrefs never mention rottentomatoes,
-    // so rewriteRtAnchors and the native-RT guard in scan are blind to them;
-    // the icon viewBoxes (critic tomato and audience popcorn) identify them
-    // instead. Takeover turns each into a live link with native-live-tile
-    // markup: repointed at the RT URL, unlocked, recolored. The grey comes
-    // from two stacked sources, both of which must go: an inline grayscale
-    // filter on the svg, and an app rule keyed on the item NOT having
-    // has-valid-rating (it lives in a cross-origin sheet, so it is invisible
-    // to cssRules walks). This function's writes are class/attribute/style
-    // level, and the hydration pass that follows writes tile text through
-    // characterData mutations (with a compare-guarded textContent fallback
-    // only on markup drift), so the body observer does not refire on any
-    // steady-state path, and Svelte re-renders that restore the dead form
-    // are simply re-taken on the next scan. Scope is the summary row only,
-    // deliberately: whether the ratings drawer ever renders dead tiles is
-    // unverified, so the drawer keeps rewrite-only treatment.
-    // Critic tomato and audience popcorn viewBoxes, captured from live markup
-    // during the 1.31 dead-tile diagnosis. The kind map feeds hydration's
-    // write-time kind derivation; the Set keeps the takeover's membership test.
+    // Native tiles carry no marker attributes (Svelte owns them), so the icon
+    // viewBoxes identify them: critic tomato and audience popcorn captured from
+    // live markup during the 1.31 dead-tile diagnosis, the IMDb wordmark
+    // during the 1.37 drilldown-anchor diagnosis. The RT kind map feeds
+    // hydration's write-time kind derivation; the Set keeps the takeover's
+    // membership test.
     const RT_TILE_KINDS = { '0 0 145 140': 'critics', '0 0 80 80': 'audience' };
     const RT_TILE_VIEWBOXES = new Set(Object.keys(RT_TILE_KINDS));
+    const IMDB_TILE_VIEWBOX = '0 0 575 289.83';
 
-    function takeOverDeadRtTiles(row, url) {
+    // Dead native RT tiles are placeholders the app renders when it has no
+    // score: a "-" value and a grayscaled icon. Revival restores the
+    // native-live-tile look so the tile reads as the link the click router
+    // makes it. The grey comes from two stacked sources, both of which must
+    // go: an inline grayscale filter on the svg, and an app rule keyed on
+    // the item NOT having has-valid-rating (it lives in a cross-origin sheet,
+    // so it is invisible to cssRules walks). This function's writes are
+    // class/style level, and the hydration pass that follows writes tile
+    // text through characterData mutations (with a compare-guarded
+    // textContent fallback only on markup drift), so the body observer does
+    // not refire on any steady-state path, and Svelte re-renders that
+    // restore the dead form are simply re-taken on the next scan. Scope is
+    // the summary row only, deliberately: whether the ratings drawer ever
+    // renders dead tiles is unverified, so the drawer keeps rewrite-only
+    // treatment.
+    function takeOverDeadRtTiles(row) {
       const taken = [];
       for (const item of row.querySelectorAll(`rating:not(.${CHIP_CLASS}) .rating-item:not(.has-valid-rating)`)) {
         const svg = item.querySelector('svg');
-        const anchor = item.closest('a');
-        if (!svg || !anchor || !RT_TILE_VIEWBOXES.has(svg.getAttribute('viewBox'))) continue;
-        anchor.classList.remove('trakt-no-link');
-        anchor.classList.add('trakt-link');
-        if (anchor.getAttribute('target') !== '_blank') anchor.target = '_blank';
-        if (anchor.getAttribute('rel') !== 'noopener') anchor.rel = 'noopener';
-        syncHref(anchor, url);
+        if (!svg || !RT_TILE_VIEWBOXES.has(svg.getAttribute('viewBox'))) continue;
         if (svg.style.filter) svg.style.filter = '';
         item.classList.add('has-valid-rating');
         taken.push(item);
@@ -2140,48 +2146,38 @@
     // Chips clone a native tile so the app's Svelte-scoped styles keep applying;
     // the score block is dropped (a search link has no rating to show) and the
     // icon swapped. Injected nodes are not in Svelte's virtual DOM, so marker
-    // attributes survive on them (unlike on app-managed nodes).
-    function buildChip(templateTile, iconSvg, label) {
+    // attributes survive on them (unlike on app-managed nodes). A chip has no
+    // anchor of its own: it sits inside the row's drilldown anchor like the
+    // native tiles and is routed by kind in the click handler.
+    function buildChip(templateTile, kind, label) {
       const chip = templateTile.cloneNode(true);
-      const anchor = chip.querySelector('a');
       const item = chip.querySelector('.rating-item');
-      if (!anchor || !item) return null;
+      if (!item) return null;
       chip.classList.add(CHIP_CLASS);
-      anchor.classList.remove('trakt-no-link');
-      anchor.classList.add('trakt-link');
-      anchor.target = '_blank';
-      anchor.rel = 'noopener';
-      anchor.title = label;
-      anchor.setAttribute('aria-label', label);
+      chip.setAttribute(KIND_ATTR, kind);
+      chip.title = label;
       item.classList.add('has-valid-rating');
       item.replaceChildren();
-      item.insertAdjacentHTML('afterbegin', iconSvg);
+      item.insertAdjacentHTML('afterbegin', ICONS[kind]);
       return chip;
     }
 
-    function ensureChip(row, templateTile, kind, label, url) {
-      let chip = row.querySelector(`.${CHIP_CLASS}[${KIND_ATTR}="${kind}"]`);
+    function ensureChip(row, templateTile, kind, label) {
+      if (row.querySelector(`.${CHIP_CLASS}[${KIND_ATTR}="${kind}"]`)) return;
+      const chip = buildChip(templateTile, kind, label);
       if (!chip) {
-        chip = buildChip(templateTile, ICONS[kind], label);
-        if (!chip) {
-          warn(`Ratings tile markup changed; cannot inject ${kind} chip`);
-          return;
-        }
-        chip.setAttribute(KIND_ATTR, kind);
-        // The row ends with a tooltip-wrapped drilldown chevron; chips
-        // belong with the tiles, so insert after the last rating element
-        // (native or chip) instead of appending past the chevron.
-        const tiles = [...row.children].filter(el => el.tagName === 'RATING');
-        if (tiles.length === 0) {
-          warn(`Ratings row shape changed; cannot place ${kind} chip`);
-          return;
-        }
-        tiles[tiles.length - 1].after(chip);
+        warn(`Ratings tile markup changed; cannot inject ${kind} chip`);
+        return;
       }
-      const anchor = chip.querySelector('a');
-      if (anchor) {
-        syncHref(anchor, url);
+      // The drilldown anchor ends with the chevron; chips belong with the
+      // tiles, so insert after the last rating element (native or chip)
+      // instead of appending past the chevron.
+      const tiles = row.querySelectorAll('rating');
+      if (tiles.length === 0) {
+        warn(`Ratings row shape changed; cannot place ${kind} chip`);
+        return;
       }
+      tiles[tiles.length - 1].after(chip);
     }
 
     function removeChip(row, kind) {
@@ -2415,31 +2411,85 @@
       if (entryExpired(entry, Date.now())) {
         resolveIds(page.type, page.slug);
       }
-      // An expired entry still styles the links while the refresh runs:
-      // stale direct links beat search links.
-      const rt = rtUrl(entry, title);
-      rewriteRtAnchors(rt);
+      // An expired entry still styles the drawer links while the refresh
+      // runs: stale direct links beat search links.
+      rewriteRtAnchors(rtUrl(entry, title));
       const templateTile = row.querySelector(`rating:not(.${CHIP_CLASS})`);
       if (!templateTile) return;
-      hydration.trackTakenTiles(takeOverDeadRtTiles(row, rt));
+      hydration.trackTakenTiles(takeOverDeadRtTiles(row));
       hydration.hydrateTiles(key);
-      // A rewritten or taken-over native RT tile already links right, so the
-      // icon-only chip is a legacy fallback for rows with no RT tiles at all
-      // (current app markup always renders the pair, dead or alive).
-      const hasNativeRt = !!templateTile.parentElement.querySelector(`rating:not(.${CHIP_CLASS}) ${RT_HREF_MATCH}`);
+      // A native RT tile (dead or alive) is routed to RT by the click
+      // handler, so the icon-only chip is a legacy fallback for rows with no
+      // RT tiles at all (current app markup always renders the pair).
+      const hasNativeRt = [...row.querySelectorAll(`rating:not(.${CHIP_CLASS}) svg`)].some(svg => RT_TILE_VIEWBOXES.has(svg.getAttribute('viewBox')));
       if (hasNativeRt) {
         removeChip(row, 'rt');
       } else {
-        ensureChip(row, templateTile, 'rt', 'Rotten Tomatoes', rt);
+        ensureChip(row, templateTile, 'rt', 'Rotten Tomatoes');
       }
       // Letterboxd covers films only; drop the chip when SPA navigation
       // reuses the row for a show.
       if (page.type === 'movie') {
-        ensureChip(row, templateTile, 'lb', 'Letterboxd', lbUrl(entry, title));
+        ensureChip(row, templateTile, 'lb', 'Letterboxd');
       } else {
         removeChip(row, 'lb');
       }
     }
+
+    // ---- Click routing ------------------------------------------------
+
+    // Which external site a summary-row tile stands for: chips by marker,
+    // native tiles by icon viewBox. null means the app's drilldown keeps the
+    // click (the Trakt tile, the chevron, row whitespace).
+    function tileSite(tile) {
+      const chipKind = tile.getAttribute(KIND_ATTR);
+      if (chipKind) return chipKind;
+      const viewBox = tile.querySelector('svg')?.getAttribute('viewBox');
+      if (RT_TILE_VIEWBOXES.has(viewBox)) return 'rt';
+      if (viewBox === IMDB_TILE_VIEWBOX) return 'imdb';
+      return null;
+    }
+
+    function siteUrl(site) {
+      const page = pageContext();
+      const title = pageTitle();
+      if (!page || !title) return null;
+      const entry = cacheGet(`${page.type}:${page.slug}`);
+      switch (site) {
+        case 'rt': return rtUrl(entry, title);
+        case 'imdb': return imdbUrl(entry, title);
+        case 'lb': return lbUrl(entry, title);
+        default: return null;
+      }
+    }
+
+    // The URL is resolved at click time from the cache, so the row needs no
+    // per-scan href maintenance and a resolution that completes after the
+    // page rendered is picked up without a rescan. Capture phase on window
+    // runs before the app's document-level link interception, which bails
+    // on a default-prevented click (verified live), so the event keeps
+    // propagating and the app's click-away bookkeeping still runs. Main-
+    // button clicks (modifiers included) and middle clicks (auxclick, whose
+    // default would open the drilldown in a new tab) both open the external
+    // site in a new tab; right clicks keep the browser's context menu.
+    // Keyboard activation targets the anchor itself, never a tile, so Enter
+    // always opens the drawer. Synthetic clicks can target document or
+    // window, which have no closest(); those are not tile clicks.
+    function routeTileClick(event) {
+      if (event.defaultPrevented || !(event.target instanceof Element)) return;
+      if (event.type === 'click' ? event.button !== 0 : event.button !== 1) return;
+      const tile = event.target.closest(`${ROW_SELECTOR} rating`);
+      if (!tile) return;
+      const site = tileSite(tile);
+      if (!site) return;
+      const url = siteUrl(site);
+      if (!url) return;
+      event.preventDefault();
+      window.open(url, '_blank', 'noopener');
+    }
+
+    window.addEventListener('click', routeTileClick, true);
+    window.addEventListener('auxclick', routeTileClick, true);
 
     scanCallbacks.push(scan);
   })();

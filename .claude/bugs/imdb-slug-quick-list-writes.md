@@ -67,4 +67,5 @@ per-tile links render fine on the same page.
    resolution is async, so entries need a pending state until the
    canonical slug lands.
 
-No fix has been chosen or implemented yet.
+Fix path 2 shipped 2026-08-27 in Trakt Improved 1.38; see
+BUGS_HISTORY.md for the fix summary and verification.

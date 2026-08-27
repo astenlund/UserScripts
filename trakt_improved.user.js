@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.37
+// @version      1.38
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -320,7 +320,7 @@
     // mutates the shared listed record in place and calls rebuildSets().
     const store = (function initStore() {
       const CACHE_KEY = 'trakt-fade-cache';
-      const CACHE_VERSION = 5;
+      const CACHE_VERSION = 6;
       const CACHE_TTL_MS = 15 * 60 * 1000;
 
       // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
@@ -328,7 +328,7 @@
       // (see fetchListedData): counts is consulted directly by the listed
       // fade check, and keys holds the owner/slug identities that classify
       // a viewed list as mine/saved for the containing-list exclusion; each
-      // non-null target carries fadeSlugs (the full itemSlug-mapped fade
+      // non-null target carries fadeSlugs (the full itemKeys-mapped fade
       // membership for quick-list fade categories) and key (the lowercased
       // owner-slug/list-slug identity for own-surface exclusion). All under
       // a top-level version stamp so a format change forces a refetch instead
@@ -649,8 +649,7 @@
           const list = withIds[index];
           const exact = perList[index]
             .filter(item => item.type === 'show' || item.type === 'movie')
-            .map(itemSlug)
-            .filter(Boolean);
+            .flatMap(itemKeys);
           // fadeSlugs mirrors the counts/watchlisted mapping (a season or
           // episode entry contributes its parent show) because it replaces
           // the list's carved-out counts contribution as the fade source;
@@ -658,7 +657,7 @@
           // need. key is the same owner/slug identity format `keys` uses,
           // so the containing-list machinery can recognize the list's own
           // surfaces.
-          const fadeSlugs = [...uniqueItemSlugs(perList[index])];
+          const fadeSlugs = [...uniqueItemKeys(perList[index])];
           targets[name] = { id: list.ids.trakt, slugs: exact, fadeSlugs, key: listIdentityKey(list) };
         }
         // Quick lists are carved out of counts: their membership fades via
@@ -671,7 +670,7 @@
           if (quickIndices.has(i)) {
             return;
           }
-          for (const slug of uniqueItemSlugs(items)) {
+          for (const slug of uniqueItemKeys(items)) {
             counts[slug] = (counts[slug] || 0) + 1;
           }
         });
@@ -692,27 +691,48 @@
           : null;
       }
 
-      // Deduped membership slugs of a list's items under the itemSlug
+      // Deduped membership keys of a list's items under the itemKeys
       // mapping (seasons and episodes contribute the parent show).
-      function uniqueItemSlugs(items) {
-        return new Set(items.map(itemSlug).filter(Boolean));
+      function uniqueItemKeys(items) {
+        return new Set(items.flatMap(itemKeys));
       }
 
-      // Watchlist/list items are heterogeneous: shows and movies contribute their
-      // own slug, seasons/episodes map to the parent show, persons are ignored.
-      function itemSlug(item) {
+      // Watchlist/list items are heterogeneous: shows and movies contribute
+      // their own keys, seasons/episodes map to the parent show, persons are
+      // ignored.
+      // --- imdb-alias membership keys (logic-test extraction block) ---
+      // The app addresses some titles by IMDb id instead of slug in detail
+      // URLs (observed on unreleased movies, whose year is null), so page
+      // and card identity can arrive under either name. Each entity
+      // therefore contributes its canonical slug key plus an IMDb alias key
+      // when the payload carries one; every consumer looks up exactly one
+      // form (its own URL segment), so the extra key never double-counts.
+      function entityKeys(type, entity) {
+        const ids = entity && entity.ids ? entity.ids : null;
+        if (!ids) return [];
+        const keys = [];
+        if (typeof ids.slug === 'string' && ids.slug) {
+          keys.push(type + ':' + ids.slug);
+        }
+        if (typeof ids.imdb === 'string' && ids.imdb && ids.imdb !== ids.slug) {
+          keys.push(type + ':' + ids.imdb);
+        }
+        return keys;
+      }
+
+      function itemKeys(item) {
         switch (item.type) {
           case 'show':
-            return item.show && item.show.ids && item.show.ids.slug ? 'show:' + item.show.ids.slug : null;
-          case 'movie':
-            return item.movie && item.movie.ids && item.movie.ids.slug ? 'movie:' + item.movie.ids.slug : null;
           case 'season':
           case 'episode':
-            return item.show && item.show.ids && item.show.ids.slug ? 'show:' + item.show.ids.slug : null;
+            return entityKeys('show', item.show);
+          case 'movie':
+            return entityKeys('movie', item.movie);
           default:
-            return null;
+            return [];
         }
       }
+      // --- end imdb-alias membership keys ---
 
       // Fully watched vs started: unique watched episode count (specials excluded)
       // vs the show's aired_episodes (which also excludes specials), joined by the
@@ -741,7 +761,7 @@
           .filter(Boolean);
       }
 
-      return { fetchAll, fetchWatchedProgress, fetchListedData, itemSlug, splitWatchedShows, movieSlugs };
+      return { fetchAll, fetchWatchedProgress, fetchListedData, itemKeys, splitWatchedShows, movieSlugs };
     })();
 
     // Shared membership patch for the optimistic toggle and the ledger's
@@ -1007,7 +1027,7 @@
           }
 
           if (watchlist.status === 'fulfilled') {
-            store.commit('watchlisted', { slugs: watchlist.value.map(fetchers.itemSlug).filter(Boolean), fetchedAt: now });
+            store.commit('watchlisted', { slugs: watchlist.value.flatMap(fetchers.itemKeys), fetchedAt: now });
             changed = true;
           } else {
             anyFailed = true;
@@ -3391,9 +3411,19 @@
     let toastTimer = 0;
 
     // The membership key format shared with the membership engine's
-    // cache (itemSlug's 'movie:<slug>' / 'show:<slug>'), built in one
-    // place.
+    // cache (itemKeys' 'movie:<slug>' / 'show:<slug>' forms, where the
+    // engine also indexes an IMDb alias per entity), built in one place.
     const slugKeyOf = (type, slug) => `${type}:${slug}`;
+
+    // --- imdb-alias write ids (logic-test extraction block) ---
+    // The list-items write endpoints match ids fields literally (no
+    // cross-field resolution, unlike the GET lookups, which accept trakt
+    // id, slug, or IMDb id interchangeably), so an IMDb-shaped URL
+    // segment must ship as the imdb id: sent as a slug it lands in
+    // not_found and the add is body-judged rejected.
+    const IMDB_ID_PATTERN = /^tt\d+$/;
+    const writeIds = slug => (IMDB_ID_PATTERN.test(slug) ? { imdb: slug } : { slug });
+    // --- end imdb-alias write ids ---
 
     // Card identity: an eligible poster link has a bare two-segment
     // /movies/<slug> or /shows/<slug> pathname AND no season/episode query
@@ -3922,7 +3952,7 @@
       }
       const bodyKey = mediaPathSegment(type);
       const url = apiUrl(`/users/me/lists/${listId}/items${add ? '' : '/remove'}`);
-      const response = await apiPost(auth, url, { [bodyKey]: [{ ids: { slug } }] });
+      const response = await apiPost(auth, url, { [bodyKey]: [{ ids: writeIds(slug) }] });
       if (!response.ok) {
         warn(`Quick list ${add ? 'add' : 'remove'} got HTTP ${response.status} for ${type}:${slug}`);
         return false;

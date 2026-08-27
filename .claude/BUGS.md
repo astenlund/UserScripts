@@ -77,18 +77,6 @@ strengthens the early DOM mutation hypothesis.
 
 **Requires:** none.
 
-### [Quick-list toggles fail on IMDb-slugged detail pages](bugs/imdb-slug-quick-list-writes.md)
-
-Reported on Animal Trap (tt43750031, unreleased): the app addresses
-some titles by IMDb id in the URL, and the quick-lists feature treats
-that segment as the Trakt slug on both sides of its contract, so adds
-land in `not_found` (writes send `ids: { slug }`) and membership
-display never matches the sweep's canonical-slug keys. Root cause
-confirmed by live API probe; full diagnosis and three candidate fix
-paths in the bug file.
-
-**Requires:** none.
-
 ### [Fade filters lost their filter-pane anchor](bugs/fade-filters-pane-anchor-lost.md)
 
 trakt.tv redesigned the filters panel (2026-08-11), so the injected

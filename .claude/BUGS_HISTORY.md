@@ -157,3 +157,28 @@ unregistering stays controlled until it navigates. Accepted cost,
 documented at the bypass: `navigator.serviceWorker.ready` never settles
 for the app, so its install prompt and anything else gated on worker
 readiness silently never runs.
+
+### Quick-list toggles fail on IMDb-slugged detail pages
+
+Reported and fixed 2026-08-27 (Trakt Improved 1.38). On Animal Trap
+(tt43750031, unreleased, year null) the app addresses the detail page
+by IMDb id instead of a Trakt slug, and the quick-lists feature treated
+that URL segment as the slug on both sides of its contract: postToggle
+sent it as `ids: { slug }`, which the list-items write endpoints match
+literally (probe: an items/remove no-op with the IMDb id as slug landed
+in not_found while the canonical slug resolved), and the membership
+sweep keyed items by canonical `ids.slug` only, so the page key could
+never match even after a successful native add. Fix dual-keys the sweep
+at the single mapping choke point (itemSlug became itemKeys: each
+show/movie contributes its canonical slug key plus an IMDb alias key;
+quick-target exact sets, fadeSlugs, listed counts, and the watchlisted
+record all inherit the alias via flatMap) with a CACHE_VERSION bump to
+6 so alias-less cached records refetch, and ships IMDb-shaped write
+segments as `ids: { imdb }` via writeIds in postToggle. The optimistic
+toggle and the confirmed-write ledger needed no change: they key by
+whatever segment the surface handed them, which the dual-keyed sweep
+now answers. Verified by .tmp/imdb-alias-logic-test.mjs over the two
+extraction blocks plus live no-op probes: items/remove with the fixed
+payload shape resolved cleanly (not_found empty) where the slug form
+had been rejected. Diagnosis record kept in
+bugs/imdb-slug-quick-list-writes.md.

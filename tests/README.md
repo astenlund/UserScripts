@@ -26,3 +26,8 @@ the season, conservative handling of unreadable season identities, the
 redesigned On/Off controls, legacy checkboxes, keyboard selection, explicit
 save behavior, drawer remounts, movie-mode hiding, and idempotent scans.
 Run this scope with `node --test tests/trakt-fade-filters.test.cjs`.
+
+Season-link tests cover adding the subtitle's season to show links,
+preserving query parameters and fragments, respecting explicit destinations,
+recycled cards, and idempotent scans. Run them with
+`node --test tests/trakt-season-links.test.cjs`.

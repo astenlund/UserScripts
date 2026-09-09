@@ -8,7 +8,10 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'trakt_improved.user.j
 const start = source.indexOf('  (function initFadeFilters() {');
 const end = source.indexOf('    // ---- Theme detection', start);
 assert.ok(start >= 0 && end > start);
-const feature = source.slice(start, end) + 'window.subject = { cardTarget, applyFades, ensureFadeSection }; })();';
+const subtitleStart = source.indexOf('  function cardSubtitleSeason(card) {');
+const subtitleEnd = source.indexOf('  // Feature: season card links', subtitleStart);
+assert.ok(subtitleStart >= 0 && subtitleEnd > subtitleStart);
+const feature = source.slice(subtitleStart, subtitleEnd) + source.slice(start, end) + 'window.subject = { cardTarget, applyFades, ensureFadeSection }; })();';
 const categories = ['started', 'watched', 'watchlisted', 'anticipated', 'uninterested', 'listed'];
 
 function load(html = '', stored = null) {

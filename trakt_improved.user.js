@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.42
+// @version      1.43
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1194,6 +1194,57 @@
   })();
 
   // ---------------------------------------------------------------------
+  // Season subtitles identify list cards whose links omit the season.
+  // Undefined means no season evidence; null means unreadable season evidence.
+  function cardSubtitleSeason(card) {
+    const subtitle = card.querySelector('.trakt-card-subtitle')?.textContent.trim() || '';
+    const match = /^Season (0|[1-9]\d*)$/.exec(subtitle);
+    if (match && Number.isSafeInteger(Number(match[1]))) return match[1];
+    if (subtitle === 'Specials') return '0';
+    if (/^Season\b/.test(subtitle) || card.querySelector('img[src*="/images/seasons/"]')) return null;
+    return undefined;
+  }
+
+  // Feature: season card links
+  // Repair navigation independently of fade settings and page scope.
+  (function initSeasonCardLinks() {
+    const repairs = new WeakMap();
+
+    function scan() {
+      for (const card of document.querySelectorAll('div.trakt-card')) {
+        const season = cardSubtitleSeason(card);
+        for (const anchor of card.querySelectorAll('a[href]')) {
+          const current = anchor.getAttribute('href');
+          const previous = repairs.get(anchor);
+          // Reused cards may retain our href while their subtitle changes.
+          // Only undo our own last write; an app-written href is authoritative.
+          const original = previous?.written === current ? previous.original : current;
+          let url;
+          try {
+            url = new URL(original, location.origin);
+          } catch {
+            // Ignore malformed site links without stopping other repairs.
+            repairs.delete(anchor);
+            continue;
+          }
+          let desired = original;
+          if (typeof season === 'string' && url.origin === location.origin
+              && /^\/shows\/[^/]+\/?$/.test(url.pathname)
+              && !url.searchParams.has('season') && !url.searchParams.has('episode')) {
+            url.searchParams.set('season', season);
+            desired = url.href;
+          }
+          if (current !== desired) anchor.setAttribute('href', desired);
+          if (desired !== original) repairs.set(anchor, { original, written: desired });
+          else repairs.delete(anchor);
+        }
+      }
+    }
+
+    scanCallbacks.push(scan);
+  })();
+
+  // ---------------------------------------------------------------------
   // Feature: fade filters
   // Restores fade/dim filtering: adds a Fade section to the filter pane and
   // fades watched/started/watchlisted/listed posters, with hover-to-reveal.
@@ -1472,13 +1523,11 @@
         if (url.origin === location.origin && segments.length === 2 && type) {
           let season = url.searchParams.get('season');
           if (type === 'show' && season === null && !url.searchParams.has('episode')) {
-            const subtitle = card.querySelector('.trakt-card-subtitle')?.textContent.trim() || '';
-            const match = /^Season (0|[1-9]\d*)$/.exec(subtitle);
-            if (match && Number.isSafeInteger(Number(match[1]))) season = match[1];
-            else if (subtitle === 'Specials') season = '0';
+            const subtitleSeason = cardSubtitleSeason(card);
             // A recognizable but unreadable season must never inherit the
             // parent show's fade while its own identity is unavailable.
-            else if (/^Season\b/.test(subtitle) || card.querySelector('img[src*="/images/seasons/"]')) return null;
+            if (subtitleSeason === null) return null;
+            if (subtitleSeason !== undefined) season = subtitleSeason;
           }
           return {
             slug: `${type}:${segments[1]}`,

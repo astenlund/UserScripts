@@ -182,3 +182,14 @@ extraction blocks plus live no-op probes: items/remove with the fixed
 payload shape resolved cleanly (not_found empty) where the slug form
 had been rejected. Diagnosis record kept in
 bugs/imdb-slug-quick-list-writes.md.
+
+### Fade controls and season list-card identity
+
+Fixed locally 2026-09-09 in Trakt Improved 1.42. The Fade section now
+supports the redesigned native segmented controls and retains legacy
+checkbox support. Season list cards whose links omit the season use
+their subtitle for season-specific fading instead of show membership.
+Six regression tests cover identity, controls, persistence, keyboard
+navigation, remounts, and idempotence. Live markup was verified; the
+updated installed userscript still needs live visual verification.
+Diagnosis: [fade filter controls](bugs/fade-filters-pane-anchor-lost.md).

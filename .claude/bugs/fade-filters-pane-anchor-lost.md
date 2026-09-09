@@ -1,60 +1,54 @@
-# Fade filters lost their filter-pane anchor
+# Fade filter controls incompatible with redesigned drawer
 
-Reported 2026-08-11: trakt.tv redesigned the filters panel, so the
-script's Fade section no longer renders on list pages. No fix yet;
-tracked from the redesign report, not yet re-probed against the live
-app.
+Reported 2026-08-11; re-probed in signed-in Chrome on 2026-09-09.
+Fixed in the local Trakt Improved 1.42 source.
 
-## Symptom
+## Verified cause
 
-The Fade section (a cloned "Display" section carrying the Watched /
-Started / Watchlisted / quick-list / Listed toggles) is absent from the
-filter pane after the redesign. Card fading itself still runs from
-default or persisted `trakt-fade-filters` state, so posters keep
-fading, but the pane offers no toggle UI anymore: a category switched
-off in the past cannot be turned back on, and the mode-based hiding of
-the Started row (hidden for `mode=movie`) also stops. The user report
-included a screenshot of the redesigned panel, but the new markup has
-not been probed; the selector map below is the fixer's starting point.
+The original diagnosis blamed a missing Display section. Live inspection
+corrected that: `div.trakt-display-section`, `.display-title`,
+`.display-toggles`, `div.trakt-filter`, and `span.secondary` still exist.
+The native checkbox was replaced with a segmented radiogroup containing
+Default, On, and Off buttons. `buildFadeSection` required a checkbox and
+returned null. The save button still uses the aria-label
+`Set filters as default`.
 
-## Mechanism
+Card fading continued from saved or default state while the controls
+were absent.
 
-`ensureFadeSection` (trakt_improved.user.js:1320) locates the clone
-source with `div.trakt-display-section:not([data-tff-section])` and
-returns early when nothing matches. After the redesign that class does
-not match, so the section is never built and the failure is silent:
-the `Filter pane markup changed` warn (line 1329) only fires when the
-section is found but `buildFadeSection` cannot clone its internals, and
-is never reached when the anchor class itself vanished. Worth fixing
-too: a vanished anchor class should warn as loudly as an unbuildable
-section.
+## Fix
 
-## Anchor surface
+Clone the native Display section and support both its legacy checkbox
+and current button shape. Fade categories are binary: remove Default
+from the cloned controls and wire On/Off state, selected styling,
+keyboard navigation, and accessibility attributes. Changes apply in
+memory; the existing explicit save button persists them. Reopening the
+drawer reconstructs current state, movie mode hides Started, and repeat
+scans do not append duplicate controls or rewrite child nodes.
 
-All selectors live in `initFadeFilters` (trakt_improved.user.js),
-confirm which ones the redesign actually broke when re-probing:
+A missing Display section warns once when the save-button landmark
+indicates an open filter drawer. Unsupported row markup also warns once.
 
-- :1321 `div.trakt-display-section:not([data-tff-section])` clone
-  source, the primary anchor; confirmed broken.
-- :1289 `div.trakt-filter` row template inside the Display section.
-- :1291 `.display-title`, :1292 `.display-toggles` section internals.
-- :1299 `span.secondary`, :1300 `input[type=checkbox]` row internals.
-- :1158 / :1344 `button[aria-label="Set filters as default"]` the
-  persistence save-button delegate. Verify separately; the redesign may
-  have renamed this aria-label or replaced the control.
-- Unaffected so far: `injectStyles` (styles run unconditionally each
-  scan with no pane dependency, so the app deemphasis neutralization
-  and hover transitions still apply), `applyFades` (drives off state
-  only), `activeMode` (URL param and stored mode).
+## Related season fade defect
 
-## Fix path
+On the Taskmaster Hall of Fame list, season cards have a
+`.trakt-card-subtitle` containing `Season N` but their links omit
+`season=`. The script therefore classified them as whole shows. Live
+inspection found the UK and NZ cards faded, and AU season 2 unfaded;
+the precise membership category behind each old fade was not inspected.
 
-Re-probe the redesigned filter pane in a live session and map the new
-markup: the section that replaced the Display section, its cloneable
-row template and title/toggles containers, and the save button's
-current label or replacement persistence control. Update the selectors
-in `buildFadeSection` / `ensureFadeSection` and the save-button
-selector, and widen the guard so a vanished anchor class produces the
-warn instead of a silent no-op.
+The fix reads the season subtitle only when the show link has neither
+a season nor an episode parameter. Explicit URL identity stays
+authoritative. Specials maps to season 0. Recognizable season cards
+whose season cannot be read stay unfaded instead of inheriting a show
+fade. Existing membership and show-level Watched/Started bucketing rules
+remain unchanged.
 
-**Requires:** none.
+## Verification
+
+`tests/trakt-fade-filters.test.cjs` exercises season-specific fading,
+identity fallback, drawer controls, saving, keyboard interaction,
+remounts, mode changes, warning bounds, and scan idempotence.
+The live DOM was inspected through signed-in Chrome. The updated source
+has not been installed or visually verified there; that connection's
+page evaluation is read-only.

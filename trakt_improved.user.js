@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.41
+// @version      1.42
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1344,8 +1344,58 @@
     }
 
     // The Fade section is a clone of the app's own Display section, so native
-    // styling applies; cloned nodes carry no Svelte listeners, and the cloned
-    // checkboxes still toggle natively.
+    // styling applies; cloned nodes carry no Svelte listeners, so each
+    // supported control shape gets its own state and event wiring.
+    function wireFadeControl(row, cat) {
+      const input = row.querySelector('input[type=checkbox]');
+      if (input) {
+        input.setAttribute('aria-label', 'Fade ' + LABELS[cat].toLowerCase());
+        input.checked = state[cat];
+        input.addEventListener('change', () => {
+          state[cat] = input.checked;
+          queueScan();
+        });
+        return true;
+      }
+      const group = row.querySelector('[role="radiogroup"]');
+      const buttons = group && [...group.querySelectorAll('button[role="radio"]')];
+      const on = buttons?.find(button => button.getAttribute('aria-label') === 'On');
+      const off = buttons?.find(button => button.getAttribute('aria-label') === 'Off');
+      if (!on || !off) return false;
+      for (const button of buttons) {
+        if (button !== on && button !== off) button.remove();
+      }
+      const choices = [on, off];
+      group.setAttribute('aria-label', 'Fade ' + LABELS[cat].toLowerCase());
+      group.style.setProperty('--segment-count', '2');
+      function sync() {
+        group.style.setProperty('--selected-index', state[cat] ? '0' : '1');
+        choices.forEach((button, index) => {
+          const selected = state[cat] === (index === 0);
+          button.classList.toggle('is-selected', selected);
+          button.setAttribute('aria-checked', String(selected));
+          button.tabIndex = selected ? 0 : -1;
+        });
+      }
+      choices.forEach((button, index) => {
+        button.addEventListener('click', () => {
+          state[cat] = index === 0;
+          sync();
+          queueScan();
+        });
+        button.addEventListener('keydown', event => {
+          if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const next = event.key === 'Home' ? on : event.key === 'End' ? off : choices[1 - index];
+          next.focus();
+          next.click();
+        });
+      });
+      sync();
+      return true;
+    }
+
     function buildFadeSection(displaySection) {
       const templateRow = displaySection.querySelector('div.trakt-filter');
       const section = displaySection.cloneNode(true);
@@ -1358,16 +1408,9 @@
       for (const cat of FADE_CATEGORIES) {
         const row = templateRow.cloneNode(true);
         const label = row.querySelector('span.secondary');
-        const input = row.querySelector('input[type=checkbox]');
-        if (!label || !input) return null;
+        if (!label || !wireFadeControl(row, cat)) return null;
         row.setAttribute(ROW_ATTR, cat);
         label.textContent = LABELS[cat];
-        input.setAttribute('aria-label', 'Fade ' + LABELS[cat].toLowerCase());
-        input.checked = state[cat];
-        input.addEventListener('change', () => {
-          state[cat] = input.checked;
-          queueScan();
-        });
         toggles.appendChild(row);
       }
       return section;
@@ -1380,7 +1423,13 @@
 
     function ensureFadeSection() {
       const displaySection = document.querySelector(`div.trakt-display-section:not([${SECTION_ATTR}])`);
-      if (!displaySection) return;
+      if (!displaySection) {
+        if (document.querySelector(SAVE_BUTTON_SELECTOR) && !warnedPaneMarkup) {
+          warnedPaneMarkup = true;
+          warn('Filter pane markup changed; cannot inject Fade section');
+        }
+        return;
+      }
       let section = displaySection.parentElement.querySelector(`[${SECTION_ATTR}]`);
       if (!section) {
         section = buildFadeSection(displaySection);
@@ -1413,16 +1462,27 @@
     // A card's anchor reveals its granularity via query params: an `episode`
     // param marks an episode-specific card (Continue Watching, Calendar), a
     // `season` param without `episode` marks a season card, neither marks a
-    // plain show/movie card.
+    // plain show/movie card unless a season subtitle identifies the newer
+    // list-card shape, whose link points at the parent show only.
     function cardTarget(card) {
       for (const anchor of card.querySelectorAll('a[href]')) {
         const url = new URL(anchor.href, location.origin);
         const segments = url.pathname.split('/').filter(Boolean);
         const type = mediaType(segments[0]);
-        if (segments.length >= 2 && type) {
+        if (url.origin === location.origin && segments.length === 2 && type) {
+          let season = url.searchParams.get('season');
+          if (type === 'show' && season === null && !url.searchParams.has('episode')) {
+            const subtitle = card.querySelector('.trakt-card-subtitle')?.textContent.trim() || '';
+            const match = /^Season (0|[1-9]\d*)$/.exec(subtitle);
+            if (match && Number.isSafeInteger(Number(match[1]))) season = match[1];
+            else if (subtitle === 'Specials') season = '0';
+            // A recognizable but unreadable season must never inherit the
+            // parent show's fade while its own identity is unavailable.
+            else if (/^Season\b/.test(subtitle) || card.querySelector('img[src*="/images/seasons/"]')) return null;
+          }
           return {
             slug: `${type}:${segments[1]}`,
-            season: url.searchParams.get('season'),
+            season,
             episode: url.searchParams.get('episode'),
           };
         }

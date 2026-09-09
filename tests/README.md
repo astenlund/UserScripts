@@ -31,3 +31,21 @@ Season-link tests cover adding the subtitle's season to show links,
 preserving query parameters and fragments, respecting explicit destinations,
 recycled cards, and idempotent scans. Run them with
 `node --test tests/trakt-season-links.test.cjs`.
+
+Season progress uses `/shows/{id}/progress/watched` with hidden seasons
+and specials included. A season is Watched when its completed count
+reaches its positive aired count, Started when completion is positive
+but below that count, and neither when nothing has been watched.
+Missing or invalid progress stays unknown and does not inherit show
+membership. Show cards retain their whole-show calculation; movies
+retain their watched membership and episode cards remain excluded.
+
+The in-memory progress cache is account-scoped, invalidates after a
+successful watched-data sweep, and expires after 15 minutes. Requests
+are limited to four at a time and 100 cached shows; a full cache retains
+fresh entries and leaves additional shows unknown until space expires.
+Failed requests retry after one minute on a subsequent scan.
+`tests/trakt-season-progress.test.cjs` covers these boundaries and the
+per-season categories. The endpoint is documented in the
+[Trakt API](https://trakt.docs.apiary.io/#reference/shows/watched-progress/get-show-watched-progress);
+the updated fetch path still needs verification in signed-in Chrome.

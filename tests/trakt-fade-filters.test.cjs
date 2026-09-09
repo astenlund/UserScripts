@@ -29,6 +29,7 @@ function load(html = '', stored = null) {
     warn: message => warnings.push(message),
     mediaType: type => ({ shows: 'show', movies: 'movie' })[type],
     membership: { sets: () => sets, listedCounts: () => ({}) },
+    seasonProgress: { category: (slug, number) => ['watched', 'started'].find(cat => sets[cat].has(`show:${slug}:s${number}`)) ?? null },
   });
   window.eval(feature);
   return { window, document: window.document, subject: window.subject, sets, saved, warnings };
@@ -72,6 +73,20 @@ test('URL seasons and episodes remain authoritative; specials and plain shows re
     assert.equal(target.season, season);
     assert.equal(target.episode, episode);
   }
+});
+
+test('season progress decides Watched versus Started independently of the show bucket', () => {
+  const { window, document, subject, sets } = load(card('Season 7') + card('Season 16'), { started: false, watched: true });
+  sets.started.add('show:taskmaster');
+  window.seasonProgress = { category: (slug, number) => number === '7' ? 'watched' : 'started' };
+  subject.applyFades('discover');
+  const cards = [...document.querySelectorAll('.trakt-card')];
+  assert.equal(cards[0].classList.contains('tff-fade'), true);
+  assert.equal(cards[1].classList.contains('tff-fade'), false);
+  window.seasonProgress = { category: () => null };
+  sets.watched.add('show:taskmaster:s7');
+  subject.applyFades('discover');
+  assert.equal(cards[0].classList.contains('tff-fade'), false);
 });
 
 test('unreadable season cards stay unfaded instead of falling back to show membership', () => {

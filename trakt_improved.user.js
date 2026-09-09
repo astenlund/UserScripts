@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.43
+// @version      1.44
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -320,7 +320,7 @@
     // mutates the shared listed record in place and calls rebuildSets().
     const store = (function initStore() {
       const CACHE_KEY = 'trakt-fade-cache';
-      const CACHE_VERSION = 6;
+      const CACHE_VERSION = 7;
       const CACHE_TTL_MS = 15 * 60 * 1000;
 
       // Cache record per category: { slugs: [...], fetchedAt: <epoch ms> },
@@ -380,6 +380,7 @@
 
       return {
         sets: () => sets,
+        watchedStamp: () => cache.watched?.fetchedAt ?? 0,
         listed: () => cache.listed,
         commit: (cat, record) => {
           cache[cat] = record;
@@ -591,8 +592,8 @@
       // extended=full suppresses the per-episode seasons breakdown entirely, so
       // watched-vs-started needs this second variant: one un-paginated object
       // mapping show trakt id -> "seasonId|seasonNumber" -> episode id -> watch
-      // dates. Per show this yields the unique watched-episode count and the
-      // numbers of seasons with at least one play, specials (season 0) excluded.
+      // dates. Per show this yields the unique watched-episode count,
+      // specials (season 0) excluded.
       async function fetchWatchedProgress(auth) {
         const url = apiUrl('/users/me/watched/shows');
         url.searchParams.set('extended', 'min');
@@ -606,7 +607,6 @@
         }
         const progress = {};
         for (const [showId, seasons] of Object.entries(body)) {
-          const seasonNumbers = [];
           let seen = 0;
           for (const [seasonKey, episodes] of Object.entries(seasons)) {
             const seasonNumber = seasonKey.split('|')[1];
@@ -614,9 +614,8 @@
             const episodeCount = Object.keys(episodes).length;
             if (episodeCount === 0) continue;
             seen += episodeCount;
-            seasonNumbers.push(seasonNumber);
           }
-          progress[showId] = { seen, seasons: seasonNumbers };
+          progress[showId] = { seen };
         }
         return progress;
       }
@@ -736,10 +735,8 @@
 
       // Fully watched vs started: unique watched episode count (specials excluded)
       // vs the show's aired_episodes (which also excludes specials), joined by the
-      // show's numeric trakt id. Each show contributes its own slug plus one
-      // show:<slug>:s<N> key per season with plays, so season cards fade by the
-      // season's own progress; the season keys follow the show's bucket since
-      // per-season aired counts are not available.
+      // show's numeric trakt id. Season cards use their own progress through
+      // seasonProgress below, never this whole-show classification.
       function splitWatchedShows(items, progress) {
         const watched = [];
         const started = [];
@@ -747,10 +744,11 @@
           const show = item.show;
           if (!show || !show.ids || !show.ids.slug) continue;
           const aired = show.aired_episodes || 0;
-          const p = progress[String(show.ids.trakt)] || { seen: 0, seasons: [] };
+          const p = progress[String(show.ids.trakt)] || { seen: 0 };
+          if (p.seen === 0) continue;
           const slug = 'show:' + show.ids.slug;
           const bucket = aired > 0 && p.seen >= aired ? watched : started;
-          bucket.push(slug, ...p.seasons.map(n => `${slug}:s${n}`));
+          bucket.push(slug);
         }
         return { watched, started };
       }
@@ -1175,6 +1173,7 @@
     // a forced or re-armed sweep pending, or foreign marker movement.
     return {
       sets: store.sets,
+      watchedStamp: store.watchedStamp,
       listedCounts: () => {
         const listed = store.listed();
         return listed ? listed.counts : {};
@@ -1194,6 +1193,82 @@
   })();
 
   // ---------------------------------------------------------------------
+  // Season progress is fetched on demand for rendered season cards. One
+  // response serves all seasons of a show; no account data is persisted.
+  // Account changes and watched-sweep stamps invalidate it. At capacity,
+  // only expired entries can be evicted, preventing per-scan request churn.
+  const seasonProgress = (function initSeasonProgress() {
+    const TTL_MS = 15 * 60 * 1000;
+    const RETRY_MS = 60 * 1000;
+    const MAX_ENTRIES = 100;
+    const MAX_REQUESTS = 4;
+    const entries = new Map();
+    let active = 0;
+    let token = null;
+    let stamp = null;
+
+    function parse(body) {
+      if (!body || !Array.isArray(body.seasons)) throw new Error('Missing season progress');
+      const result = new Map();
+      for (const season of body.seasons) {
+        if (!season || !Number.isSafeInteger(season.number) || season.number < 0
+            || !Number.isSafeInteger(season.aired) || season.aired < 0
+            || !Number.isSafeInteger(season.completed) || season.completed < 0
+            || result.has(String(season.number))) throw new Error('Invalid season progress');
+        const category = season.completed === 0 || season.aired === 0 ? null
+          : season.completed >= season.aired ? 'watched' : 'started';
+        result.set(String(season.number), category);
+      }
+      return result;
+    }
+
+    function category(slug, number) {
+      const auth = readAuth();
+      const nextToken = auth?.token ?? null;
+      const nextStamp = membership.watchedStamp();
+      if (nextToken !== token || nextStamp !== stamp) {
+        entries.clear();
+        token = nextToken;
+        stamp = nextStamp;
+      }
+      if (!auth) return null;
+      const now = Date.now();
+      const cached = entries.get(slug);
+      if (cached && (cached.pending || now < cached.expires)) return cached.data?.get(number) ?? null;
+      if (active >= MAX_REQUESTS) return null;
+      if (!cached && entries.size >= MAX_ENTRIES) {
+        const oldest = [...entries].find(([, value]) => !value.pending && value.expires <= now);
+        if (!oldest) return null;
+        entries.delete(oldest[0]);
+      }
+      const entry = { pending: true, expires: 0, data: null };
+      const requestStamp = stamp;
+      entries.set(slug, entry);
+      active++;
+      const url = apiUrl(`/shows/${encodeURIComponent(slug)}/progress/watched`);
+      url.searchParams.set('hidden', 'true');
+      url.searchParams.set('specials', 'true');
+      url.searchParams.set('count_specials', 'false');
+      url.searchParams.set('marker', `${now}-${Math.random().toString(36).slice(2)}`);
+      apiGet(auth, url).then(response => response.json()).then(parse).then(data => {
+        if (entries.get(slug) === entry && readAuth()?.token === auth.token && membership.watchedStamp() === requestStamp) {
+          entry.data = data;
+          entry.expires = Date.now() + TTL_MS;
+        }
+      }).catch(() => {
+        // Unknown progress must not inherit a show category or retry each frame.
+        entry.expires = Date.now() + RETRY_MS;
+      }).finally(() => {
+        entry.pending = false;
+        active--;
+        queueScan();
+      });
+      return null;
+    }
+
+    return { category };
+  })();
+
   // Season subtitles identify list cards whose links omit the season.
   // Undefined means no season evidence; null means unreadable season evidence.
   function cardSubtitleSeason(card) {
@@ -1724,7 +1799,10 @@
         if (target !== null && target.episode === null) {
           const key = target.season === null ? target.slug : `${target.slug}:s${target.season}`;
           const verdict = verdictFor(card);
+          const seasonCategory = target.slug.startsWith('show:') && target.season !== null && (state.started || state.watched)
+            ? seasonProgress.category(target.slug.slice('show:'.length), target.season) : null;
           fade = setCats.some(cat => {
+            if (target.season !== null && (cat === 'started' || cat === 'watched')) return cat === seasonCategory;
             if (cat in QUICK_CATS && (!verdict.quickAllowed || cat === verdict.excludedCat)) {
               return false;
             }

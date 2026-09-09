@@ -2,7 +2,7 @@
   "name": "userscripts-tests",
   "private": true,
   "scripts": {
-    "test": "node --test trakt-season-lists.test.cjs trakt-season-lists-flow.test.cjs trakt-fade-filters.test.cjs trakt-season-links.test.cjs"
+    "test": "node --test trakt-season-lists.test.cjs trakt-season-lists-flow.test.cjs trakt-fade-filters.test.cjs trakt-season-links.test.cjs trakt-season-progress.test.cjs"
   },
   "devDependencies": {
     "jsdom": "30.0.1"

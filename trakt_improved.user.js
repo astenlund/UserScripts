@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.38
-// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles (menus and the Manage lists drawer), per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
+// @version      1.39
+// @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -2853,7 +2853,7 @@
         parent.appendChild(span);
       }
       span.setAttribute(KEY_ATTR, key);
-      span.textContent = '· ' + entry.count.toLocaleString('en-US');
+      span.textContent = '\u00b7 ' + entry.count.toLocaleString('en-US');
       span.title = formatItems(entry.count);
       return span;
     }
@@ -2972,6 +2972,309 @@
     scanCallbacks.push(scan);
   })();
 
+  // ---------------------------------------------------------------------
+  // Season list management
+  // ---------------------------------------------------------------------
+
+  (function initSeasonLists() {
+    const ENTRY_ATTR = 'data-season-lists-entry';
+    const PAGE_LIMIT = 1000;
+    const writes = new Map();
+    let trigger = null;
+    let entry = null;
+    let menuHeight = null;
+    let picker = null;
+
+    function seasonFromUrl(href) {
+      const url = new URL(href, location.origin);
+      const match = /^\/shows\/([^/]+)\/?$/.exec(url.pathname);
+      const numbers = url.searchParams.getAll('season');
+      if (url.origin !== location.origin || !match || url.searchParams.has('episode') || numbers.length !== 1 || !/^(0|[1-9]\d*)$/.test(numbers[0])) return null;
+      const number = Number(numbers[0]);
+      if (!Number.isSafeInteger(number)) return null;
+      return { slug: match[1], number };
+    }
+
+    function seasonForButton(button) {
+      const card = button.closest('.trakt-card');
+      if (!card) return null;
+      const anchors = [...card.querySelectorAll('a[href]')];
+      const seasons = anchors.map(anchor => seasonFromUrl(anchor.href)).filter(Boolean);
+      if (!seasons.length || seasons.some(season => season.slug !== seasons[0].slug || season.number !== seasons[0].number)) return null;
+      return seasons[0];
+    }
+
+    function removeEntry() {
+      if (entry) entry.remove();
+      entry = null;
+      if (menuHeight) {
+        const { menu, value, priority } = menuHeight;
+        if (value) menu.style.setProperty('max-height', value, priority);
+        else menu.style.removeProperty('max-height');
+        menuHeight = null;
+      }
+    }
+
+    document.addEventListener('click', event => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest('button.trakt-popup-menu-button');
+      if (!button) return;
+      removeEntry();
+      trigger = seasonForButton(button) ? button : null;
+      queueScan();
+    }, true);
+
+    function scan() {
+      if (!trigger || !trigger.isConnected || trigger.getAttribute('aria-expanded') !== 'true') {
+        removeEntry();
+        return;
+      }
+      const season = seasonForButton(trigger);
+      if (!season) {
+        removeEntry();
+        return;
+      }
+      const identity = season.slug + ':' + season.number;
+      if (entry && entry.isConnected && entry.getAttribute(ENTRY_ATTR) === identity) return;
+      removeEntry();
+      const menus = [...document.querySelectorAll('.trakt-popup-menu-container > ul')].filter(menu => menu.getClientRects().length);
+      if (menus.length !== 1) return;
+      const menu = menus[0];
+      const rows = [...menu.children].filter(row => row.matches('li') && !row.hasAttribute(ENTRY_ATTR));
+      if (rows.some(row => /^Manage lists(?:\.{3}|\u2026)?$/.test(row.textContent.trim()))) return;
+      const report = rows.find(row => row.textContent.trim() === 'Report');
+      if (!report) return;
+      const clone = report.cloneNode(true);
+      const label = clone.querySelector('.item-label p');
+      const icon = clone.querySelector('svg');
+      if (!label || !icon) return;
+      clone.setAttribute(ENTRY_ATTR, identity);
+      clone.setAttribute('label', 'Manage lists for Season ' + season.number);
+      clone.setAttribute('aria-label', 'Manage lists for Season ' + season.number);
+      clone.removeAttribute('disabled');
+      clone.removeAttribute('aria-disabled');
+      label.textContent = 'Manage lists...';
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.innerHTML = '<path fill="currentColor" d="M3 5h2v2H3zm4 0h14v2H7zM3 11h2v2H3zm4 0h14v2H7zM3 17h2v2H3zm4 0h14v2H7z"/>';
+      const button = trigger;
+      const open = event => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const current = seasonForButton(button);
+        if (!button.isConnected || button.getAttribute('aria-expanded') !== 'true' || !current || current.slug !== season.slug || current.number !== season.number) return;
+        openPicker(season, button);
+      };
+      clone.addEventListener('click', open);
+      clone.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') open(event);
+      });
+      report.before(clone);
+      entry = clone;
+      menuHeight = { menu, value: menu.style.getPropertyValue('max-height'), priority: menu.style.getPropertyPriority('max-height') };
+      menu.style.setProperty('max-height', 'none', 'important');
+    }
+
+    async function readPages(auth, path) {
+      const items = [];
+      for (let page = 1; page <= 10000; page++) {
+        const url = apiUrl(path);
+        url.searchParams.set('page', page);
+        url.searchParams.set('limit', PAGE_LIMIT);
+        url.searchParams.set('marker', Date.now() + '-' + Math.random().toString(36).slice(2));
+        const response = await apiGet(auth, url);
+        const batch = await response.json();
+        if (!Array.isArray(batch)) throw new Error('Unexpected list response');
+        items.push(...batch);
+        const rawPages = response.headers.get('X-Pagination-Page-Count');
+        if (rawPages !== null) {
+          if (!/^\d+$/.test(rawPages)) throw new Error('Invalid list pagination');
+          const pages = Number(rawPages);
+          if (!Number.isSafeInteger(pages) || (pages === 0 && batch.length)) throw new Error('Invalid list pagination');
+          if (page >= pages) return items;
+          if (!batch.length) throw new Error('Incomplete list response');
+        } else if (batch.length < PAGE_LIMIT) {
+          return items;
+        }
+      }
+      throw new Error('List pagination limit exceeded');
+    }
+
+    function seasonMembership(items, id) {
+      if (items.some(item => !item || item.type !== 'season' || !Number.isSafeInteger(item.season?.ids?.trakt))) {
+        throw new Error('Unexpected season membership response');
+      }
+      return items.some(item => item.season.ids.trakt === id);
+    }
+
+    function writeSucceeded(body, add) {
+      if (!body || (body.not_found?.seasons?.length ?? 0) !== 0) return false;
+      return add ? body.added?.seasons === 1 || body.existing?.seasons === 1 : body.deleted?.seasons === 1;
+    }
+
+    function ensureStyle() {
+      if (document.getElementById('season-lists-style')) return;
+      const style = document.createElement('style');
+      style.id = 'season-lists-style';
+      style.textContent = `
+        .season-lists-picker { color-scheme: dark; color: var(--color-text-primary, #eee); background: var(--color-background, #202024); border: 1px solid #555; border-radius: 12px; padding: 24px; width: min(440px, calc(100vw - 32px)); max-height: 80vh; overflow: auto; box-sizing: border-box; }
+        .season-lists-picker::backdrop { background: #0009; }
+        .season-lists-picker header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+        .season-lists-picker h2 { font-size: 20px; margin: 0; }
+        .season-lists-picker p { margin: 12px 0; }
+        .season-lists-picker button { font: inherit; color: inherit; cursor: pointer; border: 1px solid #666; border-radius: 6px; background: transparent; padding: 8px 12px; }
+        .season-lists-picker button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+        .season-lists-picker button:disabled { opacity: .6; cursor: wait; }
+        .season-lists-picker .season-list-row { width: 100%; text-align: left; margin: 4px 0; display: flex; justify-content: space-between; gap: 16px; }
+        .season-lists-picker .season-list-row[aria-pressed="true"] { border-color: #9aceac; }
+        .season-lists-picker .season-list-state { flex-shrink: 0; }
+      `;
+      document.head.appendChild(style);
+    }
+
+    function openPicker(season, returnFocus) {
+      if (picker) return;
+      ensureStyle();
+      const dialog = document.createElement('dialog');
+      dialog.className = 'season-lists-picker';
+      dialog.setAttribute('aria-labelledby', 'season-lists-heading');
+      dialog.innerHTML = '<header><h2 id="season-lists-heading">Manage lists</h2><button type="button" autofocus>Close</button></header><p data-season-title></p><p role="status" aria-live="polite"></p><div data-season-list-rows></div>';
+      const status = dialog.querySelector('[role="status"]');
+      const rows = dialog.querySelector('[data-season-list-rows]');
+      dialog.querySelector('[data-season-title]').textContent = season.slug.replace(/-/g, ' ') + ' / Season ' + season.number;
+      const close = () => dialog.close();
+      dialog.querySelector('button').addEventListener('click', close);
+      dialog.addEventListener('click', event => {
+        if (event.target !== dialog) return;
+        const rect = dialog.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
+      });
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        if (picker === dialog) picker = null;
+        if (returnFocus.isConnected) returnFocus.focus();
+      }, { once: true });
+      // The popup scroll shield must not intercept scrolling in the picker.
+      const popup = entry?.closest('.trakt-popup-menu-container');
+      if (popup) {
+        const display = popup.style.getPropertyValue('display');
+        const priority = popup.style.getPropertyPriority('display');
+        popup.style.setProperty('display', 'none', 'important');
+        dialog.addEventListener('close', () => {
+          if (display) popup.style.setProperty('display', display, priority);
+          else popup.style.removeProperty('display');
+        }, { once: true });
+      }
+      document.body.appendChild(dialog);
+      picker = dialog;
+      dialog.showModal();
+
+      async function load() {
+        rows.replaceChildren();
+        status.textContent = 'Loading season and personal lists...';
+        try {
+          const auth = readAuth();
+          if (!auth) throw new Error('Sign in to Trakt, then reopen Manage lists.');
+          const [seasons, lists] = await Promise.all([
+            apiGet(auth, apiUrl('/shows/' + season.slug + '/seasons')).then(response => response.json()),
+            readPages(auth, '/users/me/lists'),
+          ]);
+          if (!dialog.isConnected) return;
+          if (!Array.isArray(seasons)) throw new Error('Unexpected seasons response');
+          const matches = seasons.filter(item => item.number === season.number);
+          const id = matches.length === 1 ? matches[0].ids?.trakt : null;
+          if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Could not identify this season.');
+          if (lists.some(list => !list || typeof list.name !== 'string' || !Number.isSafeInteger(list.ids?.trakt) || list.ids.trakt <= 0)) throw new Error('Unexpected personal lists response');
+          const uniqueLists = [...new Map(lists.map(list => [list.ids.trakt, list])).values()];
+          status.textContent = uniqueLists.length ? 'Choose a list to add or remove this season.' : 'No personal lists yet. Create a list in Trakt first.';
+          for (const list of uniqueLists) {
+            if (!dialog.isConnected) break;
+            await addListRow(auth, list, id, dialog, rows, status);
+          }
+        } catch (error) {
+          if (!dialog.isConnected) return;
+          status.textContent = 'Could not load lists. ' + error.message;
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.textContent = 'Retry';
+          retry.addEventListener('click', load);
+          rows.replaceChildren(retry);
+        }
+      }
+      void load();
+    }
+
+    async function addListRow(auth, list, id, dialog, rows, status) {
+      const path = '/users/me/lists/' + list.ids.trakt + '/items';
+      const key = auth.token + ':' + list.ids.trakt + ':' + id;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'season-list-row';
+      const name = document.createElement('span');
+      name.textContent = list.name;
+      const state = document.createElement('span');
+      state.className = 'season-list-state';
+      button.append(name, state);
+      rows.appendChild(button);
+      let member = null;
+
+      function render() {
+        if (member === null) button.removeAttribute('aria-pressed');
+        else button.setAttribute('aria-pressed', String(member));
+        state.textContent = member === null ? 'Retry' : member ? 'Added' : 'Add';
+        button.disabled = false;
+      }
+
+      async function refresh() {
+        button.disabled = true;
+        state.textContent = 'Loading...';
+        try {
+          await writes.get(key);
+          if (!dialog.isConnected) return;
+          member = seasonMembership(await readPages(auth, path + '/season'), id);
+        } catch (error) {
+          member = null;
+          if (dialog.isConnected) status.textContent = 'Could not check ' + list.name + '. ' + error.message;
+        }
+        render();
+      }
+
+      button.addEventListener('click', async () => {
+        if (button.disabled) return;
+        if (member === null) {
+          await refresh();
+          return;
+        }
+        const add = !member;
+        button.disabled = true;
+        state.textContent = 'Saving...';
+        const write = (async () => {
+          try {
+            const response = await apiPost(auth, apiUrl(path + (add ? '' : '/remove')), { seasons: [{ ids: { trakt: id } }] });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            if (!writeSucceeded(await response.json(), add)) throw new Error('Trakt did not confirm the change.');
+            member = add;
+            if (dialog.isConnected) status.textContent = list.name + ': season ' + (add ? 'added.' : 'removed.');
+          } catch (error) {
+            member = null;
+            if (dialog.isConnected) status.textContent = 'Could not confirm the change to ' + list.name + '. Retry checks membership before another change. ' + error.message;
+          } finally {
+            notifyMutation();
+            quickLists.bumpInvalidationMarker();
+            render();
+          }
+        })();
+        writes.set(key, write);
+        try {
+          await write;
+        } finally {
+          writes.delete(key);
+        }
+      });
+      await refresh();
+    }
+
+    scanCallbacks.push(scan);
+  })();
   // ---------------------------------------------------------------------
   // Feature: Uninterested list truncate
   // One-click "Truncate" entry in the kebab popup menu of the owner's

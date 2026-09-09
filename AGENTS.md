@@ -59,7 +59,7 @@ When creating a new userscript, follow this template structure:
 ### No Build Process
 - Scripts are edited directly and committed as-is
 - No compilation, bundling, or transpilation needed
-- No npm dependencies or package.json
+- No runtime npm dependencies or root package.json; test-only dependencies and commands live under `tests/`
 
 ### Script Distribution
 - Scripts are distributed via GitHub raw URLs

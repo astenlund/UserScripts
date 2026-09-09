@@ -15,6 +15,8 @@ userscripts themselves have no runtime dependencies or build step.
 
 The season-list tests cover URL identity, response validation, pagination,
 menu insertion, add/remove payloads, pending writes across picker reopen,
-and read-before-retry after an uncertain write. The DOM fixture models the
+and read-before-retry after an uncertain write. They also cover cached catalog
+rendering, minimal row reconciliation, account isolation, and bounded fresh
+membership reads. The DOM fixture models the
 observed Trakt menu markup and stubs API calls. It does not write to Trakt.
 Browser layout and native app integration still require live verification.

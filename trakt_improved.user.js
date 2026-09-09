@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.39
+// @version      1.40
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -2979,11 +2979,37 @@
   (function initSeasonLists() {
     const ENTRY_ATTR = 'data-season-lists-entry';
     const PAGE_LIMIT = 1000;
+    const MEMBERSHIP_CONCURRENCY = 4;
     const writes = new Map();
     let trigger = null;
     let entry = null;
     let menuHeight = null;
     let picker = null;
+    // Only names and IDs are cached. A token change discards the session's
+    // catalog; every open refreshes it, and failures retain the last snapshot.
+    let catalog = null;
+
+    function catalogFor(auth) {
+      if (!catalog || catalog.token !== auth.token) catalog = { token: auth.token, lists: null, pending: null };
+      return catalog;
+    }
+
+    function normalizeLists(lists) {
+      if (!Array.isArray(lists) || lists.some(list => !list || typeof list.name !== 'string' || !Number.isSafeInteger(list.ids?.trakt) || list.ids.trakt <= 0)) {
+        throw new Error('Unexpected personal lists response');
+      }
+      return [...new Map(lists.map(list => [list.ids.trakt, { name: list.name, ids: { trakt: list.ids.trakt } }])).values()];
+    }
+
+    function refreshCatalog(auth, snapshot) {
+      if (!snapshot.pending) {
+        snapshot.pending = readPages(auth, '/users/me/lists').then(lists => {
+          snapshot.lists = normalizeLists(lists);
+          return snapshot.lists;
+        }).finally(() => { snapshot.pending = null; });
+      }
+      return snapshot.pending;
+    }
 
     function seasonFromUrl(href) {
       const url = new URL(href, location.origin);
@@ -3168,44 +3194,101 @@
       picker = dialog;
       dialog.showModal();
 
+      const listRows = new Map();
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'Retry';
+      retry.hidden = true;
+      rows.after(retry);
+      let loading = false;
+      let rowsToken = null;
+      let generation = 0;
+      let activeReads = 0;
+      const waitingReads = [];
+
+      // Initial checks and user retries share capacity for this picker.
+      async function readMembership(work) {
+        if (activeReads >= MEMBERSHIP_CONCURRENCY) await new Promise(resolve => waitingReads.push(resolve));
+        else activeReads++;
+        try {
+          return dialog.isConnected ? await work() : null;
+        } finally {
+          const next = waitingReads.shift();
+          if (next) next();
+          else activeReads--;
+        }
+      }
+
+      function reconcileLists(auth, lists) {
+        if (!dialog.isConnected) return;
+        const wanted = new Set(lists.map(list => list.ids.trakt));
+        for (const [id, row] of listRows) {
+          if (!wanted.has(id)) {
+            row.button.remove();
+            listRows.delete(id);
+          }
+        }
+        lists.forEach((list, index) => {
+          let row = listRows.get(list.ids.trakt);
+          if (!row) {
+            row = createListRow(auth, list, dialog, status, readMembership);
+            listRows.set(list.ids.trakt, row);
+          }
+          row.rename(list.name);
+          if (rows.children[index] !== row.button) rows.insertBefore(row.button, rows.children[index] || null);
+        });
+      }
+
       async function load() {
-        rows.replaceChildren();
+        if (loading) return;
+        loading = true;
+        const currentGeneration = ++generation;
+        retry.hidden = true;
         status.textContent = 'Loading season and personal lists...';
         try {
           const auth = readAuth();
-          if (!auth) throw new Error('Sign in to Trakt, then reopen Manage lists.');
+          const token = auth?.token ?? null;
+          if (rowsToken !== token) {
+            rows.replaceChildren();
+            listRows.clear();
+            rowsToken = token;
+          }
+          if (!auth) {
+            catalog = null;
+            throw new Error('Sign in to Trakt, then reopen Manage lists.');
+          }
+          const snapshot = catalogFor(auth);
+          if (snapshot.lists !== null) reconcileLists(auth, snapshot.lists);
           const [seasons, lists] = await Promise.all([
             apiGet(auth, apiUrl('/shows/' + season.slug + '/seasons')).then(response => response.json()),
-            readPages(auth, '/users/me/lists'),
+            refreshCatalog(auth, snapshot).then(lists => {
+              if (currentGeneration === generation) reconcileLists(auth, lists);
+              return lists;
+            }),
           ]);
           if (!dialog.isConnected) return;
           if (!Array.isArray(seasons)) throw new Error('Unexpected seasons response');
           const matches = seasons.filter(item => item.number === season.number);
           const id = matches.length === 1 ? matches[0].ids?.trakt : null;
           if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Could not identify this season.');
-          if (lists.some(list => !list || typeof list.name !== 'string' || !Number.isSafeInteger(list.ids?.trakt) || list.ids.trakt <= 0)) throw new Error('Unexpected personal lists response');
-          const uniqueLists = [...new Map(lists.map(list => [list.ids.trakt, list])).values()];
-          status.textContent = uniqueLists.length ? 'Choose a list to add or remove this season.' : 'No personal lists yet. Create a list in Trakt first.';
-          for (const list of uniqueLists) {
-            if (!dialog.isConnected) break;
-            await addListRow(auth, list, id, dialog, rows, status);
-          }
+          status.textContent = lists.length ? 'Choose a list to add or remove this season.' : 'No personal lists yet. Create a list in Trakt first.';
+          await Promise.all([...listRows.values()].map(row => row.refresh(id)));
         } catch (error) {
           if (!dialog.isConnected) return;
           status.textContent = 'Could not load lists. ' + error.message;
-          const retry = document.createElement('button');
-          retry.type = 'button';
-          retry.textContent = 'Retry';
-          retry.addEventListener('click', load);
-          rows.replaceChildren(retry);
+          retry.hidden = false;
+        } finally {
+          loading = false;
         }
       }
+      retry.addEventListener('click', load);
       void load();
     }
 
-    async function addListRow(auth, list, id, dialog, rows, status) {
+    function createListRow(auth, list, dialog, status, readMembership) {
       const path = '/users/me/lists/' + list.ids.trakt + '/items';
-      const key = auth.token + ':' + list.ids.trakt + ':' + id;
+      let id = null;
+      let key = null;
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'season-list-row';
@@ -3214,7 +3297,8 @@
       const state = document.createElement('span');
       state.className = 'season-list-state';
       button.append(name, state);
-      rows.appendChild(button);
+      button.disabled = true;
+      state.textContent = 'Loading...';
       let member = null;
 
       function render() {
@@ -3224,13 +3308,15 @@
         button.disabled = false;
       }
 
-      async function refresh() {
+      async function refresh(seasonId = id) {
+        id = seasonId;
+        key = auth.token + ':' + list.ids.trakt + ':' + id;
         button.disabled = true;
         state.textContent = 'Loading...';
         try {
           await writes.get(key);
           if (!dialog.isConnected) return;
-          member = seasonMembership(await readPages(auth, path + '/season'), id);
+          member = await readMembership(async () => seasonMembership(await readPages(auth, path + '/season'), id));
         } catch (error) {
           member = null;
           if (dialog.isConnected) status.textContent = 'Could not check ' + list.name + '. ' + error.message;
@@ -3270,11 +3356,19 @@
           writes.delete(key);
         }
       });
-      await refresh();
+      return {
+        button,
+        refresh,
+        rename(next) {
+          list.name = next;
+          if (name.textContent !== next) name.textContent = next;
+        },
+      };
     }
 
     scanCallbacks.push(scan);
   })();
+
   // ---------------------------------------------------------------------
   // Feature: Uninterested list truncate
   // One-click "Truncate" entry in the kebab popup menu of the owner's

@@ -175,10 +175,12 @@ test('catalog cache renders immediately, reconciles rows, and bounds fresh membe
   assert.equal(rows().length, 6, 'All metadata rows render before slow membership reads finish');
   assert.equal(memberships.length, 4);
   assert.ok(rows().every(row => row.disabled));
+  assert.ok(rows().every(row => row.lastChild.textContent === 'Add' && row.lastChild.style.visibility === 'hidden'));
   await finishMemberships();
   assert.equal(memberships.length, 6);
   assert.equal(maximumActive, 4);
   assert.ok(rows().every(row => row.getAttribute('aria-pressed') === 'false'));
+  assert.ok(rows().every(row => row.lastChild.style.visibility === ''));
   close();
 
   open();

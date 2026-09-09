@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.40
+// @version      1.41
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3297,22 +3297,27 @@
       const state = document.createElement('span');
       state.className = 'season-list-state';
       button.append(name, state);
-      button.disabled = true;
-      state.textContent = 'Loading...';
       let member = null;
+      showLoading();
+
+      function showLoading() {
+        button.disabled = true;
+        state.textContent = 'Add';
+        state.style.visibility = 'hidden';
+      }
 
       function render() {
         if (member === null) button.removeAttribute('aria-pressed');
         else button.setAttribute('aria-pressed', String(member));
         state.textContent = member === null ? 'Retry' : member ? 'Added' : 'Add';
+        state.style.visibility = '';
         button.disabled = false;
       }
 
       async function refresh(seasonId = id) {
         id = seasonId;
         key = auth.token + ':' + list.ids.trakt + ':' + id;
-        button.disabled = true;
-        state.textContent = 'Loading...';
+        showLoading();
         try {
           await writes.get(key);
           if (!dialog.isConnected) return;

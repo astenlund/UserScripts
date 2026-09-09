@@ -66,6 +66,12 @@ When creating a new userscript, follow this template structure:
 - Users install by clicking the raw file link in their userscript manager
 - The `@downloadURL` metadata enables auto-updates
 
+### Browser tooling for userscript work
+
+- For live userscript investigation and testing, prefer the host's connection to the user's signed-in Chrome (Codex in Chrome or Claude in Chrome). The installed userscript, other extensions, saved settings, and authenticated site state are part of the reproduction environment.
+- Discover the connected Chrome browser and relevant tabs first. Tool names differ between hosts; select the capability that controls the user's existing Chrome session rather than assuming a particular tool name.
+- A separate Playwright browser or in-app browser may lack the user's login and installed userscripts, so it is not an equivalent reproduction environment. If connected Chrome is unavailable or cannot expose the evidence needed, report the limitation and distinguish fallback observations from behavior verified in the user's browser.
+
 ### Code Patterns
 - Each script is completely self-contained
 - No shared utilities or common code between scripts

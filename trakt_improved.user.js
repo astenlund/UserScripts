@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.44
+// @version      1.45
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3574,7 +3574,8 @@
   (function initListTruncate() {
     const TRUNCATE_OWNER = 'thefork';
     const TRUNCATE_SLUG = 'uninterested-61febd75-9914-44d8-9460-894a29968281';
-    const TRUNCATE_LIMIT = 1000;
+    // Trakt caps a list at 1000 items; trimming to half leaves headroom.
+    const TRUNCATE_LIMIT = 500;
     const PAGE_LIMIT = 1000;
     const CLICK_FRESH_MS = 3000;
     const LABEL_RESET_MS = 5000;

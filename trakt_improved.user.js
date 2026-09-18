@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.46
+// @version      1.47
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3929,6 +3929,10 @@
     const CONTEXT_FRESH_MS = 2000;
     const TOAST_ID = 'qlt-toast';
     const TOAST_DISMISS_MS = 4000;
+    // Trakt's "Account Limit Exceeded". Observed live: adding to a list at
+    // its item cap yields this status through apiz. Inferred, not observed:
+    // no other account limit applies to adding an item to an existing list.
+    const ACCOUNT_LIMIT_STATUS = 420;
 
     // --- Manage-lists drawer takeover ---
     // Spec: .claude/features/manage-lists-row-takeover.md. The drawer
@@ -4522,9 +4526,17 @@
       quickLists.refreshMembership({ writeTriggered: true });
       if (!result.ok) {
         quickLists.applyListToggle(name, slugKey, !add);
-        const headline = `Couldn't ${add ? 'add' : 'remove'} ${title ? `"${title}"` : 'item'} ${add ? 'to' : 'from'} ${name}`;
-        showToast(result.status ? `${headline} (HTTP ${result.status})` : headline);
+        showToast(writeFailureMessage({ name, title, add, status: result.status }));
       }
+    }
+
+    // The cap itself is deliberately not quoted: Trakt has lowered it
+    // before, and "full" stays true at any value.
+    function writeFailureMessage({ name, title, add, status }) {
+      const headline = `Couldn't ${add ? 'add' : 'remove'} ${title ? `"${title}"` : 'item'} ${add ? 'to' : 'from'} ${name}`;
+      if (!status) return headline;
+      const reason = add && status === ACCOUNT_LIMIT_STATUS ? ': list is full' : '';
+      return `${headline}${reason} (HTTP ${status})`;
     }
 
     // Success is judged by the response body, not status alone (the
@@ -4534,10 +4546,9 @@
     // the item in not_found means it was not in the list, which is exactly
     // the end state the user asked for. A token missing at click time is a
     // transport failure with no request sent. Every failure path logs its
-    // details; the toast carries the headline plus the HTTP status when a
-    // non-2xx response supplied one, so a rejection such as a full list is
-    // attributable without opening the console.
-    // Resolves to { ok, status? }; status is set only on a non-2xx response.
+    // details.
+    // Resolves to { ok, status? }; status is set only on a non-2xx response,
+    // and writeFailureMessage owns how it is worded in the toast.
     async function postToggle(listId, type, slug, add) {
       const auth = readAuth();
       if (!auth) {

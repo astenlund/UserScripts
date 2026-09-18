@@ -73,12 +73,9 @@ One shared fetch-and-parse helper feeds both slices:
   the expected markup, indistinguishable from a markup change)
   would be a regression. `not-found` is different in kind: it is
   RT's definitive statement that the path is dead, the stale-P1258
-  case Motivation names, so it demotes like a mismatch. This
-  mirrors the script's existing definitive-miss vs
-  transient-failure distinction (the list-item-counts feature's
-  deleted-list tombstone, `{ gone: true, fetchedAt }` in
-  `initListCounts`). 403/429/5xx stay in `error` deliberately: they are
-  what a bot wall returns, and a bot wall must never demote links.
+  case Motivation names, so it demotes like a mismatch.
+  403/429/5xx stay in `error` deliberately: they are what a bot
+  wall returns, and a bot wall must never demote links.
 
 Verification runs inside `resolveIds`, after `fetchRtPath` returns a
 path and before `cachePut`: one RT fetch per resolution, no separate

@@ -114,3 +114,19 @@ what already shipped, not to resolve dependencies.
   with server-verified writes the same night (real-drawer integration
   bullets deferred to a visible-window pass, see the spec's
   verification plan).
+- List item counts (retired, no breakout file): the `initListCounts`
+  IIFE that restored the pre-redesign item counts (a chip cloned from
+  the like action on list cards, lane headings and the list detail
+  header, a text suffix on the watchlist surfaces, backed by the
+  `trakt-list-counts-cache` localStorage cache and three un-busted API
+  reads) was removed once the app began showing item counts natively.
+  Retired 2026-09-18 in Trakt Improved 1.48. The live documents that
+  cited it (the rt-page-bridge feature file, the quick list toggles
+  spec) were reworded in the same change. The archival records that
+  still cite it describe the script as it stood when they shipped:
+  as a load-bearing consumer of `.trakt-list-summary-card` and the
+  lane-heading landmarks (fade-on-list-pages,
+  quick-list-fade-toggles), as three of the five un-busted `apiGet`
+  sites (fresh-membership-sweeps), and as the `parseListPath` wrapper
+  in the `listPathParts` extraction entry of QUICK_WINS_HISTORY.md.
+  Those landmarks no longer have a second, visible drift detector.

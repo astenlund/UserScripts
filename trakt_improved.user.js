@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.45
+// @version      1.46
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, restored list item counts, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -4494,11 +4494,11 @@
       // server holding the opposite of the last click.
       if (inFlight.has(flightKey)) return;
       inFlight.add(flightKey);
-      let ok = false;
+      let result = { ok: false };
       try {
         quickLists.applyListToggle(name, slugKey, add);
         try {
-          ok = await postToggle(target.id, type, slug, add);
+          result = await postToggle(target.id, type, slug, add);
         } catch (e) {
           warn(`Quick list ${add ? 'add' : 'remove'} failed for ${slugKey}`, e);
         }
@@ -4516,13 +4516,14 @@
       // Only body-judged success enters the ledger (the block around it
       // runs on every settled outcome); after the bump, so the entry's
       // marker snapshot includes this write's own bump.
-      if (ok) {
+      if (result.ok) {
         quickLists.noteConfirmedWrite(name, slugKey, add);
       }
       quickLists.refreshMembership({ writeTriggered: true });
-      if (!ok) {
+      if (!result.ok) {
         quickLists.applyListToggle(name, slugKey, !add);
-        showToast(`Couldn't ${add ? 'add' : 'remove'} ${title ? `"${title}"` : 'item'} ${add ? 'to' : 'from'} ${name}`);
+        const headline = `Couldn't ${add ? 'add' : 'remove'} ${title ? `"${title}"` : 'item'} ${add ? 'to' : 'from'} ${name}`;
+        showToast(result.status ? `${headline} (HTTP ${result.status})` : headline);
       }
     }
 
@@ -4533,29 +4534,32 @@
     // the item in not_found means it was not in the list, which is exactly
     // the end state the user asked for. A token missing at click time is a
     // transport failure with no request sent. Every failure path logs its
-    // details; the toast carries only the headline.
+    // details; the toast carries the headline plus the HTTP status when a
+    // non-2xx response supplied one, so a rejection such as a full list is
+    // attributable without opening the console.
+    // Resolves to { ok, status? }; status is set only on a non-2xx response.
     async function postToggle(listId, type, slug, add) {
       const auth = readAuth();
       if (!auth) {
         warn('Quick list toggle: no Trakt access token at write time; nothing sent');
-        return false;
+        return { ok: false };
       }
       const bodyKey = mediaPathSegment(type);
       const url = apiUrl(`/users/me/lists/${listId}/items${add ? '' : '/remove'}`);
       const response = await apiPost(auth, url, { [bodyKey]: [{ ids: writeIds(slug) }] });
       if (!response.ok) {
         warn(`Quick list ${add ? 'add' : 'remove'} got HTTP ${response.status} for ${type}:${slug}`);
-        return false;
+        return { ok: false, status: response.status };
       }
-      if (!add) return true;
+      if (!add) return { ok: true };
       const body = await response.json();
       const added = (body.added && body.added[bodyKey]) || 0;
       const existing = (body.existing && body.existing[bodyKey]) || 0;
       if (added + existing < 1) {
         warn(`Quick list add rejected for ${type}:${slug}; response:`, body);
-        return false;
+        return { ok: false };
       }
-      return true;
+      return { ok: true };
     }
 
     // One toast element; a new failure replaces the message and restarts

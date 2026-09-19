@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.48
+// @version      1.49
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -1333,6 +1333,7 @@
     const MODE_KEY = 'trakt_toggler_discover';
     const FADE_CLASS = 'tff-fade';
     const LIGHT_CLASS = 'tff-light';
+    const MOUSE_CLASS = 'tff-mouse';
     const STYLE_ID = 'tff-style';
     const SECTION_ATTR = 'data-tff-section';
     const ROW_ATTR = 'data-tff-row';
@@ -1438,26 +1439,41 @@
           opacity: 0.25 !important;
           filter: saturate(0.5) !important;
         }
-        /* Hover-to-reveal only on fine pointers (same gate the app uses):
-           on touch screens :hover sticks after a tap, leaving items
-           permanently unfaded. */
-        @media (hover: hover) and (pointer: fine) {
-          .${FADE_CLASS}:hover .trakt-card-cover,
-          .${FADE_CLASS}:hover .trakt-summary-card-background img {
-            opacity: 1 !important;
-            filter: none !important;
-          }
-          .${FADE_CLASS}:hover .trakt-card-footer,
-          .${FADE_CLASS}:hover .trakt-summary-card-details,
-          .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
-          .${FADE_CLASS}:hover .trakt-card-action-bar,
-          .${FADE_CLASS}:hover .trakt-indicator-tags-container {
-            opacity: 1 !important;
-            filter: none !important;
-          }
+        /* Actual mouse input enables reveal even when Chrome reports no
+           hover-capable pointer. Touch input clears the gate so sticky
+           :hover after a tap cannot keep a card revealed. */
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-card-cover,
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-summary-card-background img,
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-card-footer,
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-summary-card-details,
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-summary-card-bottom-bar,
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-card-action-bar,
+        :where(:root.${MOUSE_CLASS}) .${FADE_CLASS}:hover .trakt-indicator-tags-container {
+          opacity: 1 !important;
+          filter: none !important;
         }
       `;
       document.head.appendChild(style);
+    }
+
+    // ---- Hover input --------------------------------------------------
+
+    function initHoverReveal() {
+      const clear = () => document.documentElement.classList.remove(MOUSE_CLASS);
+      const track = event => {
+        document.documentElement.classList.toggle(MOUSE_CLASS, event.pointerType === 'mouse');
+      };
+      for (const type of ['pointerover', 'pointermove', 'pointerdown']) {
+        document.addEventListener(type, track, { capture: true, passive: true });
+      }
+      document.addEventListener('pointerout', event => {
+        if (!event.relatedTarget) clear();
+      }, { capture: true, passive: true });
+      document.addEventListener('pointercancel', clear, true);
+      window.addEventListener('blur', clear);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') clear();
+      });
     }
 
     // ---- Filter pane --------------------------------------------------
@@ -1838,6 +1854,8 @@
         membership.queueRefresh();
       }
     }
+
+    initHoverReveal();
 
     // ---- Theme detection ----------------------------------------------
 

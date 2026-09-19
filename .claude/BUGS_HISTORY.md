@@ -193,3 +193,14 @@ Six regression tests cover identity, controls, persistence, keyboard
 navigation, remounts, and idempotence. Live markup was verified; the
 updated installed userscript still needs live visual verification.
 Diagnosis: [fade filter controls](bugs/fade-filters-pane-anchor-lost.md).
+
+### Hover reveal when Chrome reports no hover-capable pointer
+
+Fixed locally 2026-09-20 in Trakt Improved 1.49. On the Anticipated
+list, Chrome reported false for both hover and fine-pointer media
+queries, disabling the installed reveal rules. Actual mouse pointer
+events now enable reveal; touch input, cancellation, pointer exit,
+window blur, and page hiding clear it. The CSS retains the existing
+theme specificity and restores every faded card layer. Two regression
+tests cover the input gate and reset paths. The updated installed
+userscript still needs live visual verification.

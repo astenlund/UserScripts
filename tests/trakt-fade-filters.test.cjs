@@ -11,7 +11,7 @@ assert.ok(start >= 0 && end > start);
 const subtitleStart = source.indexOf('  function cardSubtitleSeason(card) {');
 const subtitleEnd = source.indexOf('  // Feature: season card links', subtitleStart);
 assert.ok(subtitleStart >= 0 && subtitleEnd > subtitleStart);
-const feature = source.slice(subtitleStart, subtitleEnd) + source.slice(start, end) + 'window.subject = { cardTarget, applyFades, ensureFadeSection }; })();';
+const feature = source.slice(subtitleStart, subtitleEnd) + source.slice(start, end) + 'window.subject = { cardTarget, applyFades, ensureFadeSection, injectStyles }; })();';
 const categories = ['started', 'watched', 'watchlisted', 'anticipated', 'uninterested', 'listed'];
 
 function load(html = '', stored = null) {
@@ -166,4 +166,59 @@ test('legacy checkbox drawers still work and unsupported open drawers warn once'
     fixture.subject.ensureFadeSection();
     assert.equal(fixture.warnings.length, html ? 1 : 0);
   }
+});
+
+function pointer(window, target, type, pointerType, relatedTarget = null) {
+  const event = new window.Event(type, { bubbles: true });
+  Object.defineProperties(event, { pointerType: { value: pointerType }, relatedTarget: { value: relatedTarget } });
+  target.dispatchEvent(event);
+}
+
+test('mouse events enable hover reveal without pointer capability media queries', () => {
+  const { window, document, subject } = load();
+  subject.injectStyles();
+  const style = document.getElementById('tff-style');
+  const rules = [...style.sheet.cssRules];
+  const reveal = rules.find(rule => rule.selectorText?.includes(':hover'));
+  assert.ok(reveal, 'reveal is a top-level rule, not gated by a media query');
+  assert.equal(reveal.style.getPropertyValue('filter'), 'none');
+  assert.equal(reveal.style.getPropertyValue('opacity'), '1');
+  assert.equal(reveal.style.getPropertyPriority('filter'), 'important');
+  for (const target of ['.trakt-card-cover', '.trakt-summary-card-background img', '.trakt-card-footer', '.trakt-summary-card-details', '.trakt-summary-card-bottom-bar', '.trakt-card-action-bar', '.trakt-indicator-tags-container']) {
+    assert.ok(reveal.selectorText.includes(target));
+  }
+  assert.equal(document.documentElement.classList.contains('tff-mouse'), false);
+  for (const type of ['pointerover', 'pointermove', 'pointerdown']) {
+    window.dispatchEvent(new window.Event('blur'));
+    pointer(window, document.body, type, 'mouse');
+    assert.equal(document.documentElement.classList.contains('tff-mouse'), true, type);
+  }
+  assert.ok(reveal.selectorText.split(',').every(selector => selector.trim().startsWith(':where(:root.tff-mouse) .tff-fade:hover ')));
+  window.close();
+});
+
+test('touch, pen, cancellation and lost focus clear mouse reveal', () => {
+  const { window, document } = load();
+  const active = () => document.documentElement.classList.contains('tff-mouse');
+  for (const pointerType of ['touch', 'pen', '']) {
+    pointer(window, document.body, 'pointermove', 'mouse');
+    pointer(window, document.body, 'pointerdown', pointerType);
+    assert.equal(active(), false, pointerType);
+  }
+  pointer(window, document.body, 'pointermove', 'mouse');
+  pointer(window, document.body, 'pointerout', 'mouse', document.documentElement);
+  assert.equal(active(), true, 'moving between page elements retains hover');
+  pointer(window, document.body, 'pointerout', 'mouse');
+  assert.equal(active(), false);
+  pointer(window, document.body, 'pointermove', 'mouse');
+  pointer(window, document.body, 'pointercancel', 'mouse');
+  assert.equal(active(), false);
+  pointer(window, document.body, 'pointermove', 'mouse');
+  window.dispatchEvent(new window.Event('blur'));
+  assert.equal(active(), false);
+  pointer(window, document.body, 'pointermove', 'mouse');
+  Object.defineProperty(document, 'visibilityState', { value: 'hidden' });
+  document.dispatchEvent(new window.Event('visibilitychange'));
+  assert.equal(active(), false);
+  window.close();
 });

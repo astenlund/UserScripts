@@ -77,6 +77,40 @@ strengthens the early DOM mutation hypothesis.
 
 **Requires:** none.
 
+### Truncate fails with an item count mismatch for minutes after adds
+
+Truncate walks Uninterested in the list's own order, but Trakt refreshes
+only page 1 of a cached paginated read on a write. When an earlier read
+of the same shape (Truncate's plain walk, such as a previous run) cached
+the list's later pages before an add, the walk misses the new entries
+for up to about 5.5 minutes and the completeness guard fails closed with
+"Item count mismatch" (nothing is removed); a page that was not cached
+reads fresh, so reproducing this needs a walk of the later pages before
+the add. Sketch: select from the added-order read the membership sweep
+uses since Trakt Improved 1.50 (oldest-added walk plus the fresh
+newest-added page 1), keeping the fail-closed guard. Diagnosis:
+[quick-list adds lose fade](bugs/quick-list-adds-lose-fade.md).
+
+**Requires:** none.
+
+### Quick-list removes past page 1 re-fade for minutes after the write
+
+A quick-list remove of an entry that sits past page 1 of the membership
+sweep's oldest-added walk (for example undoing a recent add to
+Uninterested, which holds about 546 entries) unfades at once, then
+re-fades when the 30-second confirmed-write ledger expires, because
+Trakt's later-page cache keeps listing the entry for about 5.5 minutes
+after the write. The sweep that re-fades it stamps the membership
+cache fresh, so the fade stays until the first sweep after the server
+copy expires: without another write or invalidation-marker bump, that
+is the 15-minute membership TTL. Native removes past page 1 read stale
+the same way. Candidate
+fix: keep the ledger's protection for a remove while the only
+contradicting evidence comes from pages past page 1. Diagnosis:
+[quick-list adds lose fade](bugs/quick-list-adds-lose-fade.md).
+
+**Requires:** none.
+
 ## History
 
 Fixed bugs are archived in [`BUGS_HISTORY.md`](BUGS_HISTORY.md), loaded

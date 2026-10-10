@@ -82,12 +82,16 @@ held a quick-toggle add on the first read after the write.
 - Removing an entry that sits past page 1 of the oldest-added walk
   reads stale until the server copy expires, as before the fix: a
   quick-list remove of such an entry re-fades when the 30-second ledger
-  window closes, until about 5.5 minutes after the write.
+  window closes, and because that sweep stamps the cache fresh, the
+  fade stays until the first sweep after the server copy expires
+  (without another write or marker bump, the 15-minute membership
+  TTL). Tracked in BUGS.md.
 - Watched-history removals past page 1 of watched movies or shows are
   assumed to read stale the same way (unverified: only their page 1
   was observed, and it was fresh).
 - Truncate walks Uninterested in the list's own order, so its
   completeness guard fails closed with an item count mismatch for about
-  5.5 minutes after adds.
+  5.5 minutes after adds. Tracked in BUGS.md.
 - Season list management reads `/items/season` pages; a list holding
-  more than 250 season entries would read stale past page 1.
+  more than 250 season entries would read stale past page 1. Left as
+  is by user ruling 2026-10-10.

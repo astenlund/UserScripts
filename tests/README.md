@@ -50,3 +50,17 @@ Failed requests retry after one minute on a subsequent scan.
 per-season categories. The endpoint is documented in the
 [Trakt API](https://trakt.docs.apiary.io/#reference/shows/watched-progress/get-show-watched-progress);
 the updated fetch path still needs verification in signed-in Chrome.
+
+Trakt refreshes only page 1 of a cached paginated read when the
+collection changes; later pages serve their pre-write copy for about
+5.5 minutes. The membership sweep therefore walks list items and the
+watchlist oldest-added first, which keeps existing entries on their
+cached pages when entries are added, and merges in the fresh
+newest-added page 1, which holds the adds.
+`tests/trakt-membership-fetchers.test.cjs` models that cache and covers
+adds past page 1, adds that a release-date sort would insert mid-list,
+removals on page 1, the stale removal residual past page 1, overlap
+dedupe, the missing-header fallback (paging on by page 1's size,
+still reading the newest page, and failing rather than looping when the
+server ignores the page param), and quick-list membership built from
+the merged read.

@@ -185,7 +185,12 @@ path, newly exposed by the threshold comparison (under the old
 another device leaves `counts` one too high until the TTL sweep, so
 an item remotely removed from its one other list keeps fading on the
 viewed list's page for up to 15 minutes. Local removals trip the
-fetch hook or markers and heal promptly. The only other over-fade
+fetch hook or markers and heal promptly (correction 2026-10-10: only
+when the removed entry sits on page 1 of the sweep's read; past page
+1, Trakt's later-page cache keeps it listed for about 5.5 minutes, and
+a sweep in that window commits it as fresh until the next write or
+the 15-minute TTL; see
+[quick-list adds lose fade](../bugs/quick-list-adds-lose-fade.md)). The only other over-fade
 path is the theoretical missing-slug edge noted in the cache
 section; the Failure posture bullet below is scoped accordingly.
 

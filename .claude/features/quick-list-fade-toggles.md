@@ -381,6 +381,10 @@ v4-to-v5 rejection runs when 1.22 reaches installed copies.
   stale-corrector exposure it noted for quick-list fades was since
   closed for same-tab confirmed writes by the 1.26 confirmed-write
   ledger, and the cross-tab window by 1.29's storage-event trigger.
+  (Correction 2026-10-10: the ledger covered only its 30-second
+  window, and Trakt's later-page cache outlasts it; adds were fixed in
+  1.50 and later-page removes stay tracked in BUGS.md. See
+  [quick-list adds lose fade](../bugs/quick-list-adds-lose-fade.md).)
 - QUICK_WINS.md "Lift a shared list-URL parser" and the closure-split
   refactor "initFadeFilters has outgrown single-closure comprehension"
   (shipped 2026-08-02, archived in QUICK_WINS_HISTORY.md): this

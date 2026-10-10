@@ -63,7 +63,9 @@ self-convergence recorded here initially was falsified 2026-08-04
 under 1.29: the observed flip was a confounded one-off.) Historically the same
 perception was compounded by server-cache-stale sweep reads reverting
 the optimistic state, closed same-tab by the 1.26 confirmed-write
-ledger; the residual cross-tab fade lag was the then-open "Cross-tab
+ledger (only for its 30-second window: the stale reads were Trakt's
+later-page cache, which outlasts it; see "Quick-list adds lose their
+fade after about 30 seconds" below); the residual cross-tab fade lag was the then-open "Cross-tab
 list adds miss the fade treatment" entry, fixed the next day by
 fresh-membership-sweeps (see its archive entry below). The Manage-lists staleness itself is app-structural
 (no invalidation channel a script can drive); the script's own
@@ -84,7 +86,9 @@ DOM-mutation-driven scans, so an idle tab waited out the 15-minute
 cache TTL; server reads themselves were measured fresh within ~1.3-3s
 that week, refuting the original server-cache-expiry hypothesis
 (though intermittent stale windows beyond 35s also occur and are now
-fenced by the same feature's marker-nonce busting). Fix shape: a
+fenced by the same feature's marker-nonce busting; refuted 2026-10-10:
+those windows are Trakt's later-page cache, which ignores the marker,
+see "Quick-list adds lose their fade after about 30 seconds" below). Fix shape: a
 pageWindow storage listener filtered on the
 trakt-marker:invalidate: prefix debounces foreign bumps through a 2s
 settle timer into the shared forced-sweep trigger, so idle same-origin
@@ -204,3 +208,22 @@ window blur, and page hiding clear it. The CSS retains the existing
 theme specificity and restores every faded card layer. Two regression
 tests cover the input gate and reset paths. The updated installed
 userscript still needs live visual verification.
+
+### Quick-list adds lose their fade after about 30 seconds
+
+Fixed locally 2026-10-10 in Trakt Improved 1.50. Trakt refreshes only
+page 1 of a cached paginated read on a write; later pages serve the
+pre-write copy for about 5.5 minutes whatever params the read carries,
+so the sweep's walk of a multi-page list read every add on a later page
+as absent, and the 30-second confirmed-write ledger expired first. The
+membership sweep now walks list items and the watchlist oldest-added
+first and merges in the fresh newest-added page 1. Without a page-count
+header, a walk now pages on by page 1's length instead of stopping at
+the server's 250-entry clamp, and fails after 100 pages rather than
+looping. Ten regression tests model the page cache, including a
+release-sorted list, date-added ties and the header-less fallback.
+Verified live at the API level: merged reads matched
+every list's index count, and a quick-toggle add appeared on the first
+read after the write. The installed userscript still needs live
+verification after update. Diagnosis, rejected alternatives and
+residuals: [quick-list adds lose fade](bugs/quick-list-adds-lose-fade.md).

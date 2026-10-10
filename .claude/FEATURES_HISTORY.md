@@ -63,7 +63,10 @@ what already shipped, not to resolve dependencies.
   promptly on another tab's trakt-marker:invalidate:* bump (2s settle
   debounce into the shared triggerForcedSweep helper). Fixes the
   same-tab 30s fade revert and the cross-tab fade staleness for
-  same-origin tabs of one profile. Shipped 2026-08-04 in Trakt
+  same-origin tabs of one profile (the same-tab revert fix was
+  refuted 2026-10-10: the nonce does not reach Trakt's later-page
+  cache; fixed in 1.50, see BUGS_HISTORY.md "Quick-list adds lose
+  their fade after about 30 seconds"). Shipped 2026-08-04 in Trakt
   Improved 1.29 (commits 5f0b0ab, 648fd97, 25837e9, 1558add with
   review fixes autosquashed in); e2e-verified live with a namespaced
   page-context build (all sweep URLs busted; a foreign marker bump

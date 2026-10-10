@@ -2,11 +2,27 @@
 
 Status: signed off 2026-08-03 23:16, content: f617fd30
 
+Correction 2026-10-10: Part A's premise is refuted. The server's cache
+of paginated list items ignores `marker`; a write refreshes only page 1
+and later pages stay stale for about 5.5 minutes, which is what kept
+reverting the fade after the trust window. Every statement below that
+credits the marker with freshness, or this feature with fixing the
+same-tab revert, is superseded and carries an inline dated marker;
+they sit in the summary, the diagnosis, Part A, "What deliberately does
+not change", the anti-goals, the failure modes (where the
+nonce-fails-to-bust mode is confirmed as what happened), the
+verification plan (where busting efficacy is settled as refuted) and
+the backlog interactions. The nonce stays
+in the code as harmless; Trakt Improved 1.50 fixes the revert by
+reading in date-added order instead. Diagnosis:
+[quick-list adds lose fade](../bugs/quick-list-adds-lose-fade.md).
+
 Two changes to the list-membership engine in `trakt_improved.user.js`:
 (A) cache-busting `marker=` params on the engine's user-data GETs, and
 (B) a `storage`-event listener that triggers prompt sweeps when another
 tab bumps an invalidation marker. Together they fix the same-tab
-30-second fade revert after quick-toggle writes and, for same-origin
+30-second fade revert after quick-toggle writes (superseded 2026-10-10:
+A did not fix it; see the correction above) and, for same-origin
 tabs within one browser profile, the cross-tab half of the fade
 staleness bug.
 
@@ -18,7 +34,8 @@ staleness bug.
   artifact (see BUGS_HISTORY.md).
 - Trakt serves per-user GET responses from a server-side cache that
   the app busts with a per-page-load `marker=` token on its `/v3`
-  calls. The script's marker-less v2-style GETs intermittently read
+  calls (superseded 2026-10-10: the marker does not bust the cache;
+  see the correction at the top). The script's marker-less v2-style GETs intermittently read
   stale copies: probes on one day measured fresh reads within ~1.3-3s,
   while a live user reproduction the same day hit staleness beyond
   35s on the same endpoint family. Staleness is intermittent and
@@ -31,7 +48,8 @@ staleness bug.
   membership, flipping the fade back. The app's own marker-busted
   reads were fresh at the same moment (its Manage lists panel showed
   the write at ~30s), which is what makes marker busting the right
-  mechanism to adopt.
+  mechanism to adopt (superseded 2026-10-10: the app's read was fresh
+  for a reason other than its marker; see the correction at the top).
 - An idle tab (no DOM mutations) queues no scans, so
   `markersChanged()` goes unconsulted until user interaction; that
   trigger gap, not data staleness, is the cross-tab bug's dominant
@@ -45,7 +63,8 @@ staleness bug.
   confounded one-off, falsified 2026-08-04 under 1.29 (the flip did
   prove the app's read was fresh at that instant, which is what
   justified adopting busting; only the time-driven framing was
-  wrong). No script-drivable invalidation channel into the app
+  wrong; superseded 2026-10-10: that freshness did not come from the
+  marker, see the correction at the top). No script-drivable invalidation channel into the app
   exists.
 
 ## Part A: marker-busted sweep reads
@@ -53,12 +72,15 @@ staleness bug.
 `fetchAll` mints one nonce per call and threads it to every
 `fetchPage` it makes; `fetchWatchedProgress` mints its own. The
 nonce rides a `marker` query param, mirroring the app's own busting
-mechanism against the same cache; the value just needs uniqueness
+mechanism against the same cache (superseded 2026-10-10: the param
+busts nothing; see the correction at the top); the value just needs uniqueness
 per sweep (e.g. `Date.now().toString(36)` plus a random base36
 suffix), not the app's exact token format. The endpoints accept the
 param today (observed 200s). Per-`fetchAll` minting is a single-site
 convenience, not a consistency mechanism: each page URL is its own
-cache key, so every page is an independent fresh origin read, and
+cache key, so every page is an independent fresh origin read
+(refuted 2026-10-10: pages past page 1 serve a cached pre-write copy
+whatever the marker; see the correction at the top), and
 pages (or sibling collections joined later, like the listed record's
 per-list fetches or `splitWatchedShows`' two sources) can still
 straddle a server-side write exactly as marker-less reads can today.
@@ -73,7 +95,9 @@ the 1.26 entry in QUICK_WINS_HISTORY.md). The 2026-08-03 observation
 retires that rejection: the app's own marker-busted read was fresh
 on the same endpoint family at the same instant the script's
 marker-less read had been stale for over 35s, so the staleness lives
-in a buster-reachable cache layer, not in replication lag. The
+in a buster-reachable cache layer, not in replication lag (refuted
+2026-10-10: it is a later-page cache the marker does not reach; see the
+correction at the top). The
 ledger stays regardless (see below), so the untested-mechanism risk
 the old rejection guarded against is fenced by a second line of
 defense instead of blocking the mechanism.
@@ -160,14 +184,20 @@ Interaction notes:
 
 - The confirmed-write ledger, its 30s trust window, and the suspect
   resweep ladder. With A in place they become a rarely-exercised
-  second line of defense; a "expired still contradicted" warn
+  second line of defense (superseded 2026-10-10: A changed nothing for
+  them); a "expired still contradicted" warn
   appearing after this feature ships is the diagnostic that busting
-  stopped working. Widening `WRITE_TRUST_WINDOW_MS` instead of
-  busting was considered and rejected: the observed lag is unbounded
-  (about 2s in July, over 35s today), so any fixed window merely
+  stopped working (superseded 2026-10-10: busting never reached the
+  cache; the measured cause of the warn was a stale later-page read,
+  though another writer reversing the item can raise it too). Widening
+  `WRITE_TRUST_WINDOW_MS` instead of busting was considered and
+  rejected: the observed lag is unbounded (about 2s in July, over 35s
+  today; superseded 2026-10-10: the lag was the later-page cache,
+  bounded by its lifetime of about 5.5 minutes), so any fixed window merely
   moves the cliff, and a longer window also lengthens the
   phantom-defense cost when `ok` was wrongly judged true. Busting
-  removes the stale read itself.
+  removes the stale read itself (refuted 2026-10-10; see the
+  correction at the top).
 - `WRITE_SETTLE_MS` / `MUTATION_SETTLE_MS` settle windows.
 - The five un-busted `apiGet` call sites enumerated above (external
   links, the three list-counts reads, truncate).
@@ -193,7 +223,9 @@ Interaction notes:
   (or rides native marker bumps when the app itself acts in a
   covered tab). Accepted: no channel exists to do better.
 - **No v3 endpoint migration.** The v2-style endpoints plus nonce
-  are sufficient; v3 shapes are undocumented.
+  are sufficient; v3 shapes are undocumented. (Superseded 2026-10-10:
+  the nonce was not sufficient; the v2 endpoints plus date-added
+  paging are.)
 
 ## Failure modes
 
@@ -213,7 +245,8 @@ Interaction notes:
   re-issuing inside the sweep would double request volume under
   rate limiting, and a succeeding un-busted retry could commit a
   mixed busted/marker-less sweep whose stale half forfeits exactly
-  the guarantee Part A exists to provide.
+  the guarantee Part A exists to provide (superseded 2026-10-10: Part
+  A provides no freshness guarantee; see the correction at the top).
 - Server accepts the param but alters the response body because of
   it: the only class that could commit wrong data as fresh with no
   warn. Accepted on two fences: responses with and without the
@@ -226,7 +259,8 @@ Interaction notes:
   additive. Verified live at e2e before release.
 - Nonce fails to bust (cache ignores unknown params): behavior
   degrades to today's; the ledger diagnostics (see above) surface
-  it.
+  it. (Confirmed 2026-10-10 as what happened in practice; see the
+  correction at the top.)
 - Storage-triggered sweep fails: a partial failure keeps stale
   categories wholesale and arms `rearmedRefresh` (scan-consulted, so
   the next interaction heals it within the backoff rules); a total
@@ -260,8 +294,13 @@ state):
   contradicted" warn staying absent in normal use. (live-claim:
   deferred 2026-08-04: no stale window occurred during verification;
   user ruled the post-ship warn signal the settling mechanism)
+  (Settled 2026-10-10 as refuted: during a live stale window, marker-busted
+  reads past page 1 returned pre-write membership; see the correction
+  at the top.)
 - Quick-toggle an item and watch cache state for 60s+: no revert,
   no suspect-resweep churn (fetchedAt resets once, then ages).
+  (Superseded 2026-10-10: reverts recurred whenever the list's later
+  pages were cached; see the correction at the top.)
 - Two-tab, script flavor: with tab Y idle on a fade surface,
   quick-toggle an item in tab X (bumps `SELF_MARKER_KEY`); tab Y's
   `fetchedAt` resets within 15 seconds (generous: sweep duration
@@ -298,12 +337,16 @@ win).
   with this feature's shipping.
 - BUGS_HISTORY.md "Anticipated/Uninterested quick toggles rarely
   take effect": closed same day as diagnosis-only; the fade-revert
-  residue it surfaced is what this feature fixes.
+  residue it surfaced is what this feature fixes (superseded
+  2026-10-10: Trakt Improved 1.50 fixed it; see the correction at the
+  top).
 - QUICK_WINS_HISTORY.md "Write-triggered membership refresh can
   read server-cache-stale list items" (Trakt Improved 1.26): built
   the ledger this feature demotes to a second line of defense, and
   recorded cache-defeating reads as a rejected alternative; Part A
-  documents why that rejection is now retired.
+  documents why that rejection is now retired (superseded 2026-10-10:
+  the ledger was not demoted in practice, and that rejection's
+  conclusion held; see the correction at the top).
 
 ## Hardening
 

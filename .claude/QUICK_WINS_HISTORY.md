@@ -80,7 +80,11 @@ not to resolve dependencies.
   native writes (guess against unbounded lag), patch-time ledgering
   (a failed write would defend phantom state), cache-defeating
   corrector reads (untested; the ledger is lag-agnostic and a buster
-  cannot reach server-internal replication lag). Known accepted holes:
+  cannot reach server-internal replication lag; correction 2026-10-10:
+  the lag was Trakt's later-page cache, bounded at about 5.5 minutes,
+  which the ledger's 30-second window does not outlast, and the ledger
+  is therefore not lag-agnostic; see BUGS_HISTORY.md "Quick-list adds
+  lose their fade after about 30 seconds"). Known accepted holes:
   the pre-confirmation window (a sweep committing during the POST round
   trip finds no entry yet; self-heals at the forced sweep), the coarse
   whole-ledger drops, and the read-then-write instant in the bump.

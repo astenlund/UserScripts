@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.49
+// @version      1.50
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -304,7 +304,9 @@
   // List-membership engine
   // Owns the membership cache (watched/started/watchlisted/listed data
   // swept from the API), the single-flight refresh that maintains it
-  // (sweep reads cache-busted via a marker nonce, latched back to
+  // (list items and the watchlist walk oldest-added first plus the
+  // newest-added page 1, since the server refreshes only page 1 on a
+  // write; every sweep read carries a marker nonce, latched back to
   // marker-less if the server ever rejects the param), and the cross-tab
   // invalidation markers, including the storage-event trigger that
   // sweeps promptly on another tab's bump. Serves two consumers: it
@@ -509,22 +511,27 @@
     // ---- API sweep fetchers -------------------------------------------
 
     // The sweep's API reads and their result shaping, including the
-    // cache-busting nonce and the per-tab latch that degrades to
-    // marker-less GETs if the server ever rejects the param.
+    // marker nonce, the per-tab latch that degrades to marker-less GETs
+    // if the server ever rejects the param, and the added-order paging
+    // that keeps adds to paginated collections visible after writes.
     const fetchers = (function initFetchers() {
       const PAGE_LIMIT = 1000;
+      // Bounds a walk that has no page-count header to stop it, in case
+      // the server then also ignores the page param.
+      const HEADERLESS_PAGE_CAP = 100;
 
-      // Cache-busting nonce for sweep GETs, mirroring the app's own
-      // marker= mechanism against the same server-side cache (the app
-      // mints a per-page-load token; per-sweep uniqueness is all the
-      // busting needs). bustingDisabled is the per-tab latch for the
-      // server ever rejecting the param: 400/422 on a busted GET flips
-      // it and every later sweep this session runs marker-less,
-      // degrading to pre-1.29 behavior instead of a permanent sweep
-      // outage. In-memory on purpose: a server-side fix heals on the
-      // next page load. 401/403/404/429/5xx/network failures are NOT
-      // param rejections and keep their existing stale-keep + backoff
-      // routing untouched.
+      // Marker nonce for sweep GETs, mirroring the app's own marker=
+      // convention (the app mints a per-page-load token). It is not what
+      // keeps sweeps fresh: measured 2026-10-10, the server's cache of
+      // paginated list items ignores the param entirely (see
+      // fetchAddedOrder), and no endpoint has been shown to depend on it.
+      // bustingDisabled is the per-tab latch for the server ever
+      // rejecting the param: 400/422 on a busted GET flips it and every
+      // later sweep this session runs marker-less instead of suffering a
+      // permanent sweep outage. In-memory on purpose: a server-side fix
+      // heals on the next page load. 401/403/404/429/5xx/network failures
+      // are NOT param rejections and keep their existing stale-keep +
+      // backoff routing untouched.
       let bustingDisabled = false;
 
       function mintNonce() {
@@ -557,10 +564,17 @@
         }
       }
 
-      async function fetchPage(auth, path, page, nonce) {
+      // sortHow ('asc' | 'desc') orders the page by date added instead
+      // of the collection's own sort setting; null keeps the server's
+      // default order.
+      async function fetchPage(auth, path, page, nonce, sortHow = null) {
         const url = apiUrl(path);
         url.searchParams.set('page', page);
         url.searchParams.set('limit', PAGE_LIMIT);
+        if (sortHow) {
+          url.searchParams.set('sort_by', 'added');
+          url.searchParams.set('sort_how', sortHow);
+        }
         const response = await bustedGet(auth, url, nonce);
         const body = await response.json();
         if (!Array.isArray(body)) throw new Error(`Unexpected response shape for ${path}`);
@@ -572,21 +586,79 @@
       // plain 200), and the server may clamp the requested limit (observed:
       // watched/shows clamps 1000 to 250), so a page shorter than the requested
       // limit does NOT mean it was the last one. The X-Pagination-Page-Count
-      // header is authoritative; the short-page check is only a fallback for a
-      // missing header, and an empty batch is a hard stop either way.
+      // header is authoritative. Without it, the walk takes page 1's length
+      // as the server's page size and stops at the first shorter page, and
+      // an empty batch is a hard stop either way.
+      // A plain walk reads stale past page 1 after a write (measured on
+      // list items, see fetchAddedOrder, and assumed elsewhere), so it
+      // serves only collections that fit one page (the lists index) or
+      // whose default order puts new changes on page 1 (the watched
+      // collections, most recent play first, as observed 2026-10-10).
       async function fetchAll(auth, path) {
+        return (await walkPages(auth, path, null)).items;
+      }
+
+      // Reports how many pages the walk took, whether the last page
+      // carried the page-count header (counted), and its nonce, so a
+      // caller can follow up on the same collection.
+      async function walkPages(auth, path, sortHow) {
         // One nonce per collection: a single mint site per call, not a
-        // cross-page consistency mechanism (each page URL is its own
-        // cache key either way; torn reads across pages match today's
-        // marker-less behavior and the next sweep owns healing them).
+        // cross-page consistency mechanism.
         const nonce = bustingDisabled ? null : mintNonce();
         const items = [];
+        let pageSize = null;
         for (let page = 1; ; page++) {
-          const { batch, pageCount } = await fetchPage(auth, path, page, nonce);
+          const { batch, pageCount } = await fetchPage(auth, path, page, nonce, sortHow);
           items.push(...batch);
-          if (batch.length === 0) return items;
-          if (pageCount !== null ? page >= pageCount : batch.length < PAGE_LIMIT) return items;
+          pageSize ??= batch.length;
+          if (batch.length === 0 || (pageCount !== null ? page >= pageCount : batch.length < pageSize)) {
+            return { items, pages: page, counted: pageCount !== null, nonce };
+          }
+          if (pageCount === null && page >= HEADERLESS_PAGE_CAP) {
+            throw new Error(`Pagination for ${path} did not end within ${HEADERLESS_PAGE_CAP} pages`);
+          }
         }
+      }
+
+      // The server keeps a cached copy of every page of a paginated read
+      // and, when the collection changes, refreshes only page 1; later
+      // pages keep serving their copy until it expires, about 5.5 minutes
+      // (measured live 2026-10-10 on list items, whatever marker, limit or
+      // extended params the read carries). Walking oldest-added first
+      // keeps every existing entry on the page it was cached on when
+      // entries are added, since adds land at the newest end (the
+      // collection's own sort, e.g. by release date, can insert an add
+      // mid-walk and push an entry onto a stale page where neither copy
+      // holds it). The newest-added page 1, fresh like every page 1,
+      // then supplies the adds themselves. The two directions are not
+      // mirror images (ties in the server's added order break
+      // differently, observed 2026-10-10), so the reads merge by
+      // list-entry id only. Removals still read stale past page 1 until
+      // the server's copy expires: the removed entry lingers there, and
+      // entries it shifted onto page 1 arrive in both reads, which the
+      // id merge absorbs.
+      // Only a header-confirmed single page skips the newest read: a
+      // header-less walk's later pages, an empty last one included, may be
+      // pre-write copies that hide the adds.
+      async function fetchAddedOrder(auth, path) {
+        const walk = await walkPages(auth, path, 'asc');
+        if (walk.items.length === 0 || (walk.pages <= 1 && walk.counted)) return walk.items;
+        const newest = await fetchPage(auth, path, 1, walk.nonce, 'desc');
+        return mergeById(walk.items, newest.batch);
+      }
+
+      // Entries without a numeric id cannot be matched and are kept as-is.
+      function mergeById(...batches) {
+        const merged = [];
+        const seen = new Set();
+        for (const item of batches.flat()) {
+          if (typeof item.id === 'number') {
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+          }
+          merged.push(item);
+        }
+        return merged;
       }
 
       // extended=full suppresses the per-episode seasons breakdown entirely, so
@@ -633,7 +705,7 @@
         const lists = await fetchAll(auth, '/users/me/lists');
         const withIds = lists.filter(list => list.ids && list.ids.trakt !== undefined);
         const perList = await Promise.all(
-          withIds.map(list => fetchAll(auth, `/users/me/lists/${list.ids.trakt}/items`)),
+          withIds.map(list => fetchAddedOrder(auth, `/users/me/lists/${list.ids.trakt}/items`)),
         );
         const targets = {};
         const quickIndices = new Set();
@@ -759,7 +831,7 @@
           .filter(Boolean);
       }
 
-      return { fetchAll, fetchWatchedProgress, fetchListedData, itemKeys, splitWatchedShows, movieSlugs };
+      return { fetchAll, fetchAddedOrder, fetchWatchedProgress, fetchListedData, itemKeys, splitWatchedShows, movieSlugs };
     })();
 
     // Shared membership patch for the optimistic toggle and the ledger's
@@ -902,11 +974,12 @@
     // and the shared forced-sweep entry point.
     const sweep = (function initSweep() {
       // Settle window for the write-triggered corrector: longer than
-      // notifyMutation's MUTATION_SETTLE_MS because the observed server
-      // staleness already reached ~2s post-write. No settle value is
-      // sufficient alone (the lag is unbounded); the confirmed-write
-      // ledger is the actual defense, this just cheapens the case where
-      // the forced sweep is the first post-write sweep.
+      // notifyMutation's MUTATION_SETTLE_MS because server staleness of
+      // ~2s post-write was once observed. The minutes-long lags seen
+      // since were the server's page cache, which no settle value
+      // outwaits; fetchAddedOrder sidesteps it and the confirmed-write
+      // ledger backstops it, so this just cheapens the case where the
+      // forced sweep is the first post-write sweep.
       const WRITE_SETTLE_MS = 2000;
 
       let refreshInFlight = false;
@@ -1007,7 +1080,7 @@
             fetchers.fetchAll(auth, '/users/me/watched/shows?extended=full'),
             fetchers.fetchWatchedProgress(auth),
             fetchers.fetchAll(auth, '/users/me/watched/movies'),
-            fetchers.fetchAll(auth, '/users/me/watchlist'),
+            fetchers.fetchAddedOrder(auth, '/users/me/watchlist'),
             fetchers.fetchListedData(auth),
           ]);
           const now = Date.now();

@@ -52,6 +52,23 @@ only under some timing conditions. Identify the disabled-state carrier
 and determine whether opening the panel initializes membership or
 rendering state that subsequently heals the summary-menu rows.
 
+Lead, observed 2026-10-17 and unverified as the cause: summary-menu
+rows carry a `disabled` attribute (`disabled="false"` on Manage lists,
+Set as cover image and Drop show; absent on Share, History and
+Report), and `buildEntries` clones the first native row as the
+template for the injected rows, so each injected row inherits whatever
+`disabled` value that row held at clone time. The clones carry no
+Svelte bindings, so the app never updates them; if it renders the
+template disabled while loading, entries cloned then would stay
+greyed. Precedent from the other menu surface: the season list
+management entry, which clones the card popup menu's Report row,
+already strips both `disabled` and `aria-disabled` from its clone
+(added in 312c214), so `aria-disabled` is a second candidate carrier
+(the summary menu's own Report row carries no `disabled`). Unprobed:
+the template's values at clone time on a cold load, which attribute
+(if either) greys a row, and why opening Manage lists would heal it
+(the lead alone does not explain the healing).
+
 **Requires:** none.
 
 ### RT score hydration uses the fresh icon for rotten scores

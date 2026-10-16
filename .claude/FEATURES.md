@@ -239,6 +239,18 @@ shipped hydration renders. Product call, RT season-page shape, cache
 widening, and the season-aware page key are all open; captured
 2026-08-06, design not started.
 
+### [Live markup contract check](features/live-markup-contract-check.md)
+
+An agent-run check, in the user's signed-in Chrome, of every markup
+contract the script relies on (selectors, required nodes, attribute
+carriers per surface and state), so one "run the contract check"
+request names what an app redesign broke. Live by user ruling, not
+fixture snapshots. Captured 2026-10-17 after Trakt's drawer and
+summary-menu redesign broke three script features, the reported one
+by still matching a selector against the wrong node; form, inventory
+source of truth, state-reaching, write safety and installed-copy
+interference are open.
+
 ## History
 
 Implemented features are archived in

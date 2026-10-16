@@ -174,9 +174,16 @@ Alternatives considered and rejected:
   because element scroll events do not bubble), so the shield now
   covers it too; see the BUGS_HISTORY.md entry "Scroll shield never
   armed for the summary actions menu" (fixed in Trakt Improved 1.27).
-  The open-state guard keys on the li-bearing menu element plus the
-  dismissal underlay, because the bare class also matches a
-  permanently-rendered wrapper with a nonzero rect.
+  The open-state guard requires both the menu's li-bearing row group
+  and the dismissal underlay, because the bare class also matches a
+  permanently-rendered wrapper with a nonzero rect. The row group is
+  a `ul` of li rows directly under the inner menu element
+  (`ul.trakt-dropdown-group`, observed 2026-10-17: one group while
+  open, none while closed), which the guard targets since Trakt
+  Improved 1.51. Through 1.50 the guard
+  looked for li rows directly under the menu element, the markup at
+  the time, and Trakt's move of the rows into the `ul` left that
+  guard never arming.
 - **Filter pane, tooltips**: the `EventTracker` wheel listeners on
   `html` appear and disappear with other UI too (observed adds and
   removes while no popup was open). The shield keys on a rendered

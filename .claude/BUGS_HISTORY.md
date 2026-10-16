@@ -227,3 +227,27 @@ every list's index count, and a quick-toggle add appeared on the first
 read after the write. The installed userscript still needs live
 verification after update. Diagnosis, rejected alternatives and
 residuals: [quick-list adds lose fade](bugs/quick-list-adds-lose-fade.md).
+
+### Drawer removes look like no-ops after Trakt's checkbox redesign
+
+Fixed locally 2026-10-17 in Trakt Improved 1.51. Reported on Treasure
+Island (2026): removing it from Anticipated in the Manage lists drawer
+did nothing visible. Trakt had redesigned the drawer's list rows from
+bookmarks to checkboxes whose label verb, `aria-pressed`, box fill and
+checkmark path all track membership. The takeover still corrected only
+the label and the first `path` fill, so on a checked row its remove
+landed server-side (confirmed by API read) while the box stayed
+checked, and every unchecked quick-list row failed the ownership
+predicate and stayed native. Trakt had also moved the summary actions
+menu's rows into a `ul` group, which silently disabled the
+summary-menu Anticipated/Uninterested entries and the scroll shield's
+summary-menu guard. The takeover now paints all four carriers (hiding
+the app's checkmark, or adding a script-owned one) and, when a row
+goes native, repaints it from the app's own checkmark; both
+summary-menu consumers now look for the row group under the menu.
+Twelve regression tests model the new markup. Verified live: the new
+summary-menu selectors against the real menu, and the 1.51 painting
+logic applied by hand to real drawer rows (without writes); the
+installed userscript still needs live verification after update.
+Design record:
+[manage-lists row takeover](features/manage-lists-row-takeover.md).

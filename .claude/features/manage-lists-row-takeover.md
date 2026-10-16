@@ -24,13 +24,15 @@ and the service worker does asset caching only. Rejected on
 principle: synthetically driving a real native mutation (e.g.
 watchlist on+off) to piggyback on the app's own invalidation costs
 two real server writes plus activity noise per toggle. Also rejected:
-visual-only sync; correcting the bookmark fill without owning the
-click makes the app's stale model act opposite to what the corrected
+visual-only sync; correcting the membership display without owning
+the click makes the app's stale model act opposite to what the corrected
 visual promises. Also rejected: cloning or injecting replacement
 rows (the menu entries' own technique): the drawer re-renders its
 content per open and patches the same row nodes in place, so
 injected nodes would be churned or duplicated on every open, while
-in-place attribute corrections are idempotent and observer-safe.
+in-place corrections are idempotent and observer-safe (attribute
+writes, plus, under the checkbox markup, one script-owned checkmark
+inside an owned row's `svg`).
 
 ## Probed ground truth (live app, 2026-08-05)
 
@@ -143,6 +145,64 @@ Re-probed 2026-08-07 (pre-implementation probe, items (a)-(d)):
   dropped. (This also empirically vindicates the generic `path`
   selector over the class-qualified form.)
 
+Re-probed 2026-10-17 after a user report that a drawer remove of an
+Anticipated row did nothing (supersedes the Row markup and
+Membership signal claims above, the Rows-patched-in-place claim that
+the spinner is the only childList churn, and the 2026-08-07 spinner
+conclusion, for the current app version):
+
+- Row markup: the quick-list and other personal-list rows are now
+  checkboxes: `ul > li` rows with `role=button`, `tabindex=0`,
+  `data-color`, `label`, `aria-pressed` and `disabled` attributes,
+  holding `div.item-icon > svg` with a box `rect` and, only while
+  the app shows the row as a member, a
+  checkmark `path` (`d` `M7.5 12.5L10.5 15.5L16.5 9`, stroke
+  `var(--checkbox-icon-check-color, var(--color-option-list-background))`,
+  stroke-width 2, fill `currentColor`), followed by the app's block
+  anchor comment. The `p` still carries the verbatim list name and
+  `data-variant` is absent on these rows. The Watchlist row keeps its
+  `path.trakt-bookmark-path` and has no `aria-pressed`.
+- Membership signal: four carriers in step, observed on settled rows
+  (one checked, several unchecked): the `label` verb (format
+  unchanged), `aria-pressed` (`true`/`false`), the box `rect` `fill`
+  (`currentColor`/`transparent`), and the checkmark `path`'s
+  presence. Whether they stay in step through transitions (a native
+  toggle in flight, the membership query resolving) was not probed
+  (live-claim: provisional); the unwind's belief read rests on the
+  checkmark tracking the app's belief.
+- What 1.50 did with it: the predicate's `path` check failed on every
+  unchecked quick-list row (`drawer-markup` warned, rows native),
+  while checked rows were owned and corrected by writing the label
+  and the checkmark path's `fill`, which leaves the box filled and
+  the check stroked. A script remove therefore landed server-side
+  (API read: the item absent from Anticipated, the list's
+  `updated_at` at the write) while the row kept looking checked, and
+  since a click acts on the rendered label verb, which the
+  correction had flipped to Add, a second click would have re-added
+  the item.
+- Summary actions menu: its rows moved into a `ul.trakt-dropdown-group`
+  under the inner menu element. The context capture still matches
+  (`div.trakt-summary-actions li`, row text "Manage lists…"); the
+  menu entries and the scroll shield needed new selectors.
+- Card popup menu: its rows also sit in a `ul.trakt-dropdown-group`,
+  directly under `.trakt-popup-menu-container` after a `div.spacer`;
+  `renderPopup`'s first-`ul` lookup still finds it, and the injected
+  entries rendered with correct membership icons (probed on a
+  list-page card). That card's menu had no Manage lists row, so the
+  popup entry point into the drawer (its Manage lists row and the
+  context capture through sibling injected entries) was not
+  re-probed (live-claim: provisional).
+- Not re-probed: the spinner markup under the checkbox design and the
+  drawer lifecycle across dismissal (live-claim: provisional). If the
+  spinner still removes the `svg`, the predicate's box check fails
+  for its duration (about 700 ms when probed 2026-08-07), so a
+  quick-list row toggled natively, which happens only while the row
+  is not owned, registers a `drawer-markup` candidate that the
+  `WARN_SETTLE_MS` gate absorbs.
+
+Trakt Improved 1.51 adapts the takeover to this markup; the Design
+sections below describe the checkbox behavior.
+
 ## Design
 
 All of this lives inside the existing quick-list-toggles IIFE,
@@ -247,8 +307,10 @@ One helper decides both mechanisms. A row is owned when all hold:
   the click listener is document-level, so containment is what
   scopes both mechanisms to the drawer surface),
 - its `p` textContent is a `QUICK_LIST_NAMES` entry,
-- its bookmark `path` node exists (a row without one cannot render
-  or read membership; missing markup raises `drawer-markup`),
+- its checkbox box `rect` exists inside the row's `svg` (a row
+  without one cannot render membership; missing markup raises
+  `drawer-markup`; the checkmark `path` is state, not structure, so
+  its absence never fails the predicate),
 - its label parses and the title matches `drawerContext.title`,
 - `quickLists.getListTarget(name)` resolves (missing or ambiguous
   list leaves the row native),
@@ -256,8 +318,8 @@ One helper decides both mechanisms. A row is owned when all hold:
 
 Predicate failures classify by reason, and the warn keys follow the
 reason, never the marker: a row whose `p` textContent name-matches a
-quick list but whose label fails to parse or whose bookmark `path`
-is missing raises `drawer-markup`; a parsed label whose title
+quick list but whose label fails to parse or whose box `rect` is
+missing raises `drawer-markup`; a parsed label whose title
 differs from `drawerContext.title` raises `drawer-title-mismatch`;
 a matching title whose target de-resolved or whose membership data
 went absent is an ownership loss and raises `drawer-ownership-lost`
@@ -267,8 +329,10 @@ persistence-gated: the drawer renders through known healthy
 transients that match their triggers (the item-switch window,
 where a freshly captured context precedes the app's per-item row
 re-render, and the pre-resolution window, where labels may not yet
-parse; the app's item-icon spinner was probed 2026-08-07 and
-cannot trigger these keys at all, see Probed ground truth), and
+parse; the app's item-icon spinner could not trigger these keys
+under the bookmark markup, while under the checkbox markup it can
+only on a row toggled natively, which the gate absorbs, see Probed
+ground truth), and
 `warnedTargets` keys are page-lifetime, so a spurious
 fire would permanently silence the diagnostic. A candidate for
 these keys therefore fires only when the same row still exhibits
@@ -316,9 +380,17 @@ native.
 ### Rendering corrections
 
 A drawer renderer joins the feature's existing scan callback. For
-each owned row it compares the label verb/preposition and the
-bookmark path `fill` against engine membership and rewrites them on
-disagreement, preserving the app's exact label format. At the
+each owned row it paints all four membership carriers from engine
+membership, each compare-then-write: the label verb/preposition
+(preserving the app's exact label format), `aria-pressed`, the box
+`rect` `fill`, and the checkmark. The app's own checkmark `path` is
+hidden with an inline `display: none` when the engine says
+non-member, never removed (the node belongs to the app's render, and
+its presence is how the unwind reads the app's belief); a member row
+the app renders unchecked gets a script-owned checkmark `path`
+marked `data-mlrt-check`, copying the app's checkmark attributes,
+and that glyph is removed again once the app renders its own or the
+engine says non-member. At the
 first scan where it owns a row for the current item (whether or not
 a correction is needed), the renderer stamps one marker attribute,
 `data-mlrt-item` (the context's `slugKeyOf` key), compare-then-write;
@@ -328,10 +400,17 @@ always means an item change. The marker is
 item-scoped because row nodes are reused across items and stamped
 attributes survive re-renders (probed ground truth above). One
 value per attribute, per the sibling `data-qlt-*` convention; the
-`mlrt` prefix is a rename axis for namespaced e2e builds. All
-writes are attribute-only, so they cannot retrigger the shared
-childList body observer; the compare-then-write guard is still
-applied per the repo idempotence rule.
+`mlrt` prefix is a rename axis for namespaced e2e builds. It renames
+`data-mlrt-check` too, but does not isolate the checkmark between two
+running instances: the belief read takes any checkmark `path`
+lacking the instance's own attribute for the app's, so each instance
+reads the other's glyph as app belief (see the e2e notes in
+AGENTS.md). Every write but one is attribute-only and
+cannot retrigger the shared childList body observer; the exception
+is inserting or removing the script-owned checkmark, which that
+observer sees, and the compare-then-write guard (the repo
+idempotence rule) makes the scan it triggers find agreement and
+write nothing.
 
 On owned rows the renderer additionally clears the greyed state.
 Its carrier is whatever attribute or class the pre-implementation
@@ -358,13 +437,13 @@ correction; a row the predicate does not own keeps its native
 greyed state untouched.
 
 When a scan finds a marked row the predicate no longer owns, the
-unwind is: drop the marker and write nothing (except, on
-item-mismatch drops only, operationally `data-mlrt-item` differing
-from a PRESENT context key, the single fill write of the
-probe-selected fill-normalization sub-step below, when probe (d)
-selected it; no-context drops and same-item losses write nothing,
-matching Failure modes and the Ownership-loss verification
-bullet). Warn once (warn key
+unwind is: drop the marker and, when the row's box `rect` exists,
+repaint all four carriers from the app's own belief, read from its
+checkmark node at unwind time (present means member); the repaint
+removes the script-owned checkmark and un-hides the app's. Every
+drop repaints the same way, whatever its reason (item mismatch, no
+context, same-item loss), which subsumes the fill-normalization
+sub-step below. Warn once (warn key
 `drawer-ownership-lost`, exempt from the persistence gate per the
 Ownership predicate) only when the failure reason is a genuine
 same-item ownership loss: `data-mlrt-item` matches the current
@@ -376,41 +455,47 @@ title mismatch on a matching key (a capture miss showing a
 different item, whose warn is `drawer-title-mismatch` from the
 predicate classification, not an ownership loss).
 
-Restoring the pre-correction attributes was designed and rejected:
-at unwind time the app's current belief is unobservable, because an
-app patch that converged onto engine truth is
-value-indistinguishable from the script's own standing correction
-(the same property that makes the attribute observer loop-free), so
-any stored snapshot can be silently stale and a restore can write a
-state the app never settled on. The unwind therefore leaves the
-row's attributes as they stand, and the resulting mismatch windows
-are accepted as bounded and self-healing: a same-tab rename or
-delete is a native list-affecting action, so the app's own
-invalidation refetch re-renders the drawer rows within about a
-second and the attribute observer re-scans that patch; a
-de-resolution discovered by a sweep (the change happened in another
-tab or device) leaves the row showing the server truth the script
-last wrote, with the app's equally stale native handling behind it,
-converging at the app's next refetch or reload. Residual risk,
-accepted pending probe: on the fail-closed item-switch path the
+Under the bookmark markup, restoring the pre-correction attributes
+was designed and rejected: at unwind time the app's current belief
+was unobservable, because an app patch that converged onto engine
+truth is value-indistinguishable from the script's own standing
+correction (the same property that makes the attribute observer
+loop-free), so any stored snapshot could be silently stale and a
+restore could write a state the app never settled on. That unwind
+left the row's attributes as they stood and accepted bounded,
+self-healing mismatch windows until the app's next refetch or
+reload. The checkbox markup makes the belief observable: the app
+renders its checkmark `path` while it shows the row as a member
+(observed on settled rows; transitions unprobed, see the 2026-10-17
+record), and the script never adds or removes that node (it only
+hides it, and its own glyph is told apart by `data-mlrt-check`).
+The unwind reads that node at unwind time, never a snapshot, so the
+repaint cannot restore a state the app has since left, and the row
+hands back showing what its now-native click will act on. The app's
+belief itself may still be stale until its next refetch or reload,
+which is the native pre-feature behavior. Residual risk under
+the bookmark markup, accepted pending probe (subsumed under the
+checkbox markup by the unwind repaint): on the fail-closed
+item-switch path the
 app's in-place patch rewrites the label (it embeds the title) but
 has not been probed to repaint a `fill` whose bound value is
 unchanged across the switch, so a previously corrected fill could
 survive onto the new item's row (live-claim: probed 2026-08-07:
 moot, the drawer unmounts on dismissal and rows are not reused
 across opens in the current app version, so the sub-step is NOT
-selected; the machinery remains specified as defense against a
-future persistent-drawer version). The same question applies to the greyed-state carrier
+selected; the machinery was kept as defense against a future
+persistent-drawer version until the checkbox unwind repaint replaced
+it). The same question applies to the greyed-state carrier
 the renderer clears: probe item (d) records its repaint behavior
 alongside fill; unlike a stranded fill, a stranded cleared carrier
 self-heals when the new item's membership query resolves (the app
 re-establishes the state it wants), so its exposure is bounded to
-the pre-resolution window and accepted. If the probe shows the app does not repaint it, a
-fill-normalization sub-step joins the stale-item drop, specified
-against the probe result; it would stamp `data-mlrt-fill` and
-`data-mlrt-asserted` (pre-correction and last-written fills, named
-here so the e2e rename axis covers them). If the app repaints, no
-such sub-step exists. `data-variant` and row order are never
+the pre-resolution window and accepted. The fill-normalization
+sub-step that a non-repainting probe result would have added to the
+stale-item drop (stamping `data-mlrt-fill` and `data-mlrt-asserted`,
+the pre-correction and last-written fills) was never selected and is
+retired: the checkbox unwind repaint rewrites the box fill from the
+app's belief on every drop. `data-variant` and row order are never
 touched. On scan with stale or absent membership
 data, call `quickLists.refreshMembership()` (the menu-open heal
 precedent), so an open drawer heals itself without a /discover
@@ -470,8 +555,10 @@ When the app patches drawer rows to its own belief (a
 mutation-driven refetch, the first-open membership query resolving,
 or the per-item re-render on open), a scan must follow or
 corrections silently revert. Ambient triggers cannot guarantee
-that: app patches are attribute-only (the shared body observer is
-childList-only), the fetch hook's `notifyMutation` fires only for
+that: app patches to the label, `aria-pressed` and box `fill` are
+attribute-only (the shared body observer is childList-only; only
+the app adding or removing its checkmark `path` reaches it), the
+fetch hook's `notifyMutation` fires only for
 non-GET calls so a resolving GET query patches without any scan,
 and a mutation's settled scan (`MUTATION_SETTLE_MS`, 1000 ms) races
 the refetch round trip. The drawer therefore gets its own
@@ -480,8 +567,8 @@ drawer node and keyed by a WeakSet on the node (the rating-labels
 feature's `instrumented` WeakSet idiom, so a drawer node replaced
 across SPA route changes gets a fresh observer; the probe record
 establishes within-page persistence only), watching the row subtree with an
-attribute filter (the row `label`, the bookmark path `fill`, and
-the greyed-state carrier once the probe names it; a class-token
+attribute filter (the row `label`, `aria-pressed`, the box `rect`
+`fill`, and the greyed-state carrier once the probe names it; a class-token
 carrier enters the filter as `class`, since attributeFilter
 accepts attribute names only), whose callback queues the shared
 scan. The scan's
@@ -502,7 +589,7 @@ truth).
 - Markup drift: parsers fail, predicate returns null, rows stay
   native. `drawer-markup` warns once, raised when a row whose `p`
   textContent name-matches a quick list has an unparseable label or
-  a missing bookmark `path` (the name match guards against warning
+  a missing box `rect` (the name match guards against warning
   on legitimately foreign rows). Whole-surface drift (the drawer
   class renamed, no rows found at all) is deliberately silent: it
   is indistinguishable from a drawer holding no quick-list rows.
@@ -515,14 +602,25 @@ truth).
   the Ownership predicate, which absorbs the drawer's own
   transients (one accepted residual: the no-carrier slow-query
   case, stated at the gate), and `drawer-ownership-lost` is exempt
-  (one-shot raise sites). The feature degrades to today's behavior,
-  never to wrong writes.
+  (one-shot raise sites). Drift that the predicate detects degrades
+  to native behavior, never to wrong writes. Drift it cannot detect
+  is a different class: a structural check that still matches, but
+  against a node that no longer carries membership. The 2026-10-17
+  redesign was this class for 1.50 (the generic `path` check matched
+  the new checkmark on checked rows), which painted owned rows
+  inconsistently without a warning and set up an unintended re-add
+  on a second click. 1.51 keeps the residual in a narrower form: the
+  predicate requires only a box `rect`, and the belief read takes any
+  non-script `path` for the app's checkmark, so a future change that
+  keeps a `rect` but moves membership elsewhere would again paint
+  inconsistently and silently (accepted; catching it is the job of
+  the live markup contract check in FEATURES.md's Exploring
+  section).
 - Context capture misses an open path, or the title-equality
   assumption fails: title cross-check fails and the rows go native:
   unmarked rows stay untouched, and marked rows drop their markers
-  per the unwind rule (Rendering corrections): earlier-item markers
-  may carry the probe-selected fill normalization (when selected),
-  current-item markers drop with no writes; warn once
+  and repaint from the app's own belief per the unwind rule
+  (Rendering corrections), whatever item the marker names; warn once
   (`drawer-title-mismatch`). Same degradation. Residual risk,
   accepted: the label carries no year, so a drawer opened through
   an unobserved path for a *different* item with an identical
@@ -532,21 +630,20 @@ truth).
   is a double-fault.
 - `getListTarget` de-resolves after corrections were written: the
   next scan drops the marker and warns once
-  (`drawer-ownership-lost`); the mismatch window this leaves is
-  bounded and self-healing (see the unwind rationale under
-  Rendering corrections). A click racing that scan is suppressed
+  (`drawer-ownership-lost`), repainting the row from the app's own,
+  possibly stale, belief, so its display matches its native click
+  handling until the app's next refetch (see the unwind rationale
+  under Rendering corrections). A click racing that scan is suppressed
   without a write by the marker rule under Click interception. The
   predicate-gated write path never reaches `performToggle` with a
   missing target, so its internal warn-and-toast branch is not this
   feature's handler.
 - A failed capture clears the context while the drawer still shows
   the same item: previously corrected rows drop their markers
-  silently and go native with the script's last corrections still
-  displayed. Accepted residual: the displayed state is the server
-  truth the script last wrote, the app's next patch or per-item
-  render replaces it, and reaching it requires a capture-path
-  failure in the first place (same double-fault class as the
-  capture-miss risk above).
+  silently and go native, repainted to the app's own belief. Under
+  the bookmark markup they kept the script's last corrections, an
+  accepted residual; the checkbox repaint removes it, and the
+  displayed state then matches the app's native click handling.
 - Engine data stale: rows render stale engine truth and heal via
   the sweep, the same posture as menu entries. Absent data (cold
   start) leaves the predicate null and rows native while the heal
@@ -624,14 +721,12 @@ button opens the menu reliably).
   (its confirm modal appears on remove; cancel it for a zero-write
   probe), no attribute corrections occur, and the
   `drawer-title-mismatch` warn fired once. With rows still marked
-  for an EARLIER item, verify the stale markers are dropped with no
-  writes beyond the probe-selected fill normalization (when
-  selected) and the rows behave natively for the new item. With rows
-  marked for the CURRENT context key but displaying a different
-  title (simulated capture miss), verify the same drop with no
-  writes at all (the fill-normalization detector cannot fire when
-  the marker key matches), that only `drawer-title-mismatch`
-  fires, and that clicks are native.
+  for an EARLIER item, verify the stale markers are dropped, the
+  rows are repainted to the app's own belief, and the rows behave
+  natively for the new item. With rows marked for the CURRENT
+  context key but displaying a different title (simulated capture
+  miss), verify the same drop and repaint, that only
+  `drawer-title-mismatch` fires, and that clicks are native.
 - Markup drift: in the injected build, corrupt one owned row's
   label format persistently; verify `drawer-markup` fires once
   (after the `WARN_SETTLE_MS` gate, delivered by the candidate's
@@ -646,24 +741,37 @@ button opens the menu reliably).
   page-lifetime key): first, in the injected build, de-resolve the
   owned list's target (remove it from the engine store) while
   corrected rows are on screen, with no click; the next scan must
-  drop the marker attribute with no other writes and warn once
+  drop the marker attribute, repaint the row to the app's own belief
+  (writing only the carriers whose corrections disagreed with it,
+  removing any script-owned checkmark), and warn once
   (`drawer-ownership-lost`), and clicks afterwards reach the app
   natively. Then, after a reload and fresh corrections, de-resolve
   and click before the next scan; the click must be suppressed
   with no write (API read confirms no membership change) and
   carries this page load's single warn.
 - Reconciliation: with owned rows corrected, simulate an app patch
-  in the injected build by writing stale label/fill values directly
-  onto a corrected row. (No native trigger reliably produces a
+  in the injected build by writing stale label, `aria-pressed` or
+  box fill values directly onto a corrected row. (No native trigger reliably produces a
   disagreeing patch once corrections stand: a native-action refetch
   returns server truth that already includes the script's write, so
   its patch agrees with the standing correction and no re-assert
   write exists to observe.) Instrument with an in-page attribute
   log (a temporary observer in the injected build timestamping
-  label/fill mutations): pass when the re-assert write lands within
+  carrier mutations): pass when the re-assert write lands within
   one animation frame of the simulated patch, and when renderer
   write counts across N driven scans settle to zero after the
   re-assert (the mutation-count method), proving no scan loop.
+  Under the checkbox markup, also simulate the app inserting and
+  removing its own checkmark `path` on a corrected row: that patch
+  is childList, re-asserted through the shared body observer rather
+  than the drawer's attribute observer, and passes under the same
+  one-frame and settle conditions (the script-owned glyph leaves
+  when the app's appears and returns when it goes). Run the glyph
+  and unwind legs with the installed copy disabled (see the rename
+  caveat under Rendering corrections); when it cannot be disabled,
+  those legs rest on the fixture tests in
+  `tests/trakt-quick-list-toggles.test.cjs` and their live
+  verification is recorded as pending.
 - First-open state: after a full reload, open the drawer once; the
   owned rows must show engine truth from the first scan where their
   labels parse (before query resolution if probe (b) found
@@ -703,7 +811,8 @@ the open features.
 - The Watchlist row and all non-quick-list rows, including their
   native confirm-on-remove flow.
 - Row order and drawer layout; no cloned or injected rows on this
-  surface.
+  surface (the one injected node is the script-owned checkmark
+  glyph inside an owned row's `svg`).
 - Season- and episode-scoped drawer items: their rows stay fully
   native this slice (the context capture covers movie and show
   identities only).

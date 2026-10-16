@@ -64,3 +64,19 @@ dedupe, the missing-header fallback (paging on by page 1's size,
 still reading the newest page, and failing rather than looping when the
 server ignores the page param), and quick-list membership built from
 the merged read.
+
+As observed on 2026-10-17, Trakt's summary actions menu holds its rows
+in a `ul.trakt-dropdown-group`, and the Manage lists drawer's list rows
+are checkboxes whose label verb, `aria-pressed`, box fill and checkmark
+path all track membership. `tests/trakt-quick-list-toggles.test.cjs`
+models that markup and covers drawer removes on rows the app shows
+checked, the script-owned checkmark on member rows the app shows
+unchecked (and its removal once the app draws its own), handing a row
+back to native showing the app's own belief, re-assertion of app
+patches through the drawer's attribute observer and the body childList
+observer until scans settle, and summary-menu entries leading the
+grouped rows exactly once. `tests/trakt-popup-scroll-shield.test.cjs`
+covers the shield arming only while the summary menu's row group and
+underlay are both rendered (both, neither, and each alone). These
+fixtures pin the logic to markup observed on that date; they cannot
+detect a later markup change, which still needs live verification.

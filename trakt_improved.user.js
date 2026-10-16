@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.50
+// @version      1.51
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3576,6 +3576,17 @@
     const DRAWER_CONTEXT_FRESH_MS = 15000;
     const WARN_SETTLE_MS = 2000;
     const MARKER_ATTR = 'data-mlrt-item';
+    // Marks the script-owned checkmark glyph, which an owned row gets when
+    // engine truth is member while the app renders it unchecked. Its
+    // attributes copy the app's own checkmark path (live-probed
+    // 2026-10-17), so both glyphs render identically.
+    const CHECK_ATTR = 'data-mlrt-check';
+    const CHECK_PATH = {
+      d: 'M7.5 12.5L10.5 15.5L16.5 9',
+      stroke: 'var(--checkbox-icon-check-color, var(--color-option-list-background))',
+      'stroke-width': '2',
+      fill: 'currentColor',
+    };
     // Both menu surfaces render the row with a trailing U+2026 ellipsis
     // (live-probed 2026-08-07); built from a char code so the source
     // stays ASCII-safe.
@@ -3761,8 +3772,8 @@
       const name = nameEl ? nameEl.textContent.trim() : null;
       if (!name || !QUICK_LIST_NAMES.includes(name)) return { state: 'foreign' };
       const parsed = parseDrawerLabel(row.getAttribute('label'));
-      const path = row.querySelector('path');
-      if (!parsed || !path) return { state: 'failed', reason: 'drawer-markup' };
+      const box = row.querySelector('svg rect');
+      if (!parsed || !box) return { state: 'failed', reason: 'drawer-markup' };
       if (!drawerContext) return { state: 'failed', reason: 'no-context' };
       if (parsed.title !== drawerContext.title) return { state: 'failed', reason: 'drawer-title-mismatch' };
       const absent = membershipAbsent !== undefined ? membershipAbsent : quickLists.membershipState() === 'absent';
@@ -3770,7 +3781,7 @@
       if (!target || absent) {
         return { state: 'failed', reason: 'drawer-ownership-lost' };
       }
-      return { state: 'owned', name, member: target.has(drawerContextKey()), parsed, path };
+      return { state: 'owned', name, member: target.has(drawerContextKey()), parsed, box };
     }
 
     // Persistence gate: the drawer renders through healthy transients
@@ -3779,10 +3790,12 @@
     // so a candidate matures only when the same row still shows the
     // same failure WARN_SETTLE_MS after first seen. Registering a
     // candidate schedules its own re-check scan, so delivery never
-    // depends on ambient churn reaching an idle page. The greyed and
-    // spinner re-arm arms are dropped (probe 2026-08-07: no carrier
-    // identified; spinner unrecorded), so the no-carrier residual in
-    // the spec applies: a transient outliving the gate burns the key.
+    // depends on ambient churn reaching an idle page. The greyed re-arm
+    // arm is dropped (probe 2026-08-07: no carrier identified), so the
+    // no-carrier residual in the spec applies: a transient outliving the
+    // gate burns the key. The spinner needs no arm: it ran about 700 ms
+    // when probed 2026-08-07, inside the gate, and only on rows the app
+    // toggles natively.
     function noteGatedWarn(row, reason, detail) {
       const seen = warnCandidates.get(row);
       if (!seen || seen.reason !== reason) {
@@ -3800,18 +3813,21 @@
       warn('Manage-lists drawer: ' + detail);
     }
 
-    // Drawer renderer. Corrections are attribute-only compare-then-write
-    // (invisible to the shared childList body observer; the guard also
-    // terminates the attribute observer's own bounce after one round).
-    // Re-assertion is self-triggering: the per-node observer queues a
-    // scan on any app patch to a row label or bookmark fill, whatever
-    // transport delivered it, so a patch is re-asserted within a frame.
+    // Drawer renderer. Corrections are compare-then-write, so the scan a
+    // write triggers finds agreement and writes nothing: attribute writes
+    // bounce once off the per-node attribute observer, and the check
+    // glyph insert or remove bounces once off the shared childList body
+    // observer. Re-assertion is self-triggering: the per-node observer
+    // queues a scan on any app patch to a row label, aria-pressed or box
+    // fill, and the body observer sees the app adding or removing its
+    // checkmark, whatever transport delivered the patch, so a patch is
+    // re-asserted within a frame.
     function renderDrawer() {
       const drawer = document.querySelector('div.trakt-drawer');
       if (!drawer) return;
       if (!drawerObserved.has(drawer)) {
         drawerObserved.add(drawer);
-        new MutationObserver(queueScan).observe(drawer, { subtree: true, attributes: true, attributeFilter: ['label', 'fill'] });
+        new MutationObserver(queueScan).observe(drawer, { subtree: true, attributes: true, attributeFilter: ['label', 'aria-pressed', 'fill'] });
       }
       // Menu-open heal precedent: an open drawer heals stale or absent
       // membership data without a /discover visit; staleness-gated, so
@@ -3839,32 +3855,66 @@
           // key mismatch always means an item change.
           const key = drawerContextKey();
           if (row.getAttribute(MARKER_ATTR) !== key) row.setAttribute(MARKER_ATTR, key);
-          correctDrawerRow(row, verdict);
+          paintDrawerRow(row, verdict.box, verdict.member);
           continue;
         }
         unwindDrawerRow(row, verdict);
       }
     }
 
-    // data-variant and row order are never touched; the label rewrite
-    // preserves the app's exact format.
-    function correctDrawerRow(row, verdict) {
+    // The app keeps four membership carriers in step on a checkbox row
+    // (live-probed 2026-10-17): the label verb, the row's aria-pressed,
+    // the box rect's fill, and a checkmark path it renders only while it
+    // believes the row is a member. Painting sets all four. The app's own
+    // checkmark is hidden rather than removed, since that node belongs to
+    // the app's render; a member row the app shows unchecked gets the
+    // script-owned glyph instead. data-variant and row order are never
+    // touched; the label rewrite preserves the app's exact format.
+    function paintDrawerRow(row, box, member) {
       const label = row.getAttribute('label') || '';
-      const wanted = wantedDrawerLabel(label, verdict.member);
+      const wanted = wantedDrawerLabel(label, member);
       if (label !== wanted) row.setAttribute('label', wanted);
-      const fill = verdict.member ? 'currentColor' : 'transparent';
-      if (verdict.path.getAttribute('fill') !== fill) verdict.path.setAttribute('fill', fill);
+      const pressed = String(member);
+      if (row.getAttribute('aria-pressed') !== pressed) row.setAttribute('aria-pressed', pressed);
+      const fill = member ? 'currentColor' : 'transparent';
+      if (box.getAttribute('fill') !== fill) box.setAttribute('fill', fill);
+      const svg = box.closest('svg');
+      const appCheck = appCheckOf(svg);
+      if (appCheck) {
+        const display = member ? '' : 'none';
+        if (appCheck.style.display !== display) appCheck.style.display = display;
+      }
+      const ownCheck = svg.querySelector(`[${CHECK_ATTR}]`);
+      if (member && !appCheck) {
+        if (!ownCheck) svg.append(buildCheck());
+      } else if (ownCheck) {
+        ownCheck.remove();
+      }
     }
 
-    // Unwind: drop the marker, write nothing. Restoring pre-correction
-    // attributes was designed and rejected (the app's current belief is
-    // unobservable at unwind time: a patch converged onto engine truth
-    // is value-indistinguishable from the script's own correction), and
-    // the resulting mismatch windows are bounded and self-healing (see
-    // the spec's unwind rationale). Warn only on a genuine same-item
-    // ownership loss; stale residue and capture misses drop silently
-    // (a title mismatch already warns through its own gated key in the
-    // renderer classification).
+    // The script never adds or removes the app's checkmark, so its
+    // presence is the app's current belief about the row.
+    function appCheckOf(svg) {
+      return svg.querySelector(`path:not([${CHECK_ATTR}])`);
+    }
+
+    function buildCheck() {
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      for (const [name, value] of Object.entries(CHECK_PATH)) {
+        check.setAttribute(name, value);
+      }
+      check.setAttribute(CHECK_ATTR, '');
+      return check;
+    }
+
+    // Unwind: drop the marker and repaint the row from the app's own
+    // belief, read from its checkmark node, so the row hands back showing
+    // what the now-native click will act on. The belief is read at unwind
+    // time, never snapshotted, so the repaint cannot restore a state the
+    // app has since left. Warn only on a genuine same-item ownership
+    // loss; stale residue and capture misses drop silently (a title
+    // mismatch already warns through its own gated key in the renderer
+    // classification).
     function unwindDrawerRow(row, verdict) {
       if (verdict.reason === 'drawer-markup') {
         noteGatedWarn(row, 'drawer-markup', 'quick-list row markup drifted; rows stay native');
@@ -3879,6 +3929,8 @@
       const marker = row.getAttribute(MARKER_ATTR);
       if (!marker) return;
       row.removeAttribute(MARKER_ATTR);
+      const box = row.querySelector('svg rect');
+      if (box) paintDrawerRow(row, box, appCheckOf(box.closest('svg')) !== null);
       const contextKey = drawerContextKey();
       if (marker === contextKey && verdict.reason === 'drawer-ownership-lost') {
         warnDrawerOnce('drawer-ownership-lost', 'list de-resolved under corrected rows; rows returned to native');
@@ -4252,16 +4304,18 @@
       return { type, slug: segments[1], title, at: Date.now() };
     }
 
-    // The inline actions menu (div.trakt-summary-actions holding li rows
-    // as DIRECT children; an outer wrapper shares the class and is an
-    // ANCESTOR of the menu, so a descendant-scoped li lookup would match
-    // the wrapper too and double-inject) grows naturally in its slider,
-    // so no height override applies here. SPA navigation can swap detail
-    // pages without rebuilding the menu DOM, so entries record their
-    // identity and are rebuilt whenever it no longer matches.
+    // The inline actions menu holds its li rows in ul groups directly
+    // under the inner div.trakt-summary-actions (live-probed 2026-10-17:
+    // a single group; an outer wrapper shares the class and holds no
+    // group of its own). Entries go into the first group only, so a menu
+    // split into several groups still gets one set. The menu grows
+    // naturally in its slider, so no height override applies here. SPA
+    // navigation can swap detail pages without rebuilding the menu DOM,
+    // so entries record their identity and are rebuilt whenever it no
+    // longer matches.
     function renderSummary() {
       const context = summaryContext();
-      for (const menu of document.querySelectorAll('div.trakt-summary-actions')) {
+      for (const menu of document.querySelectorAll('div.trakt-summary-actions > ul:first-of-type')) {
         if (!menu.querySelector(':scope > li')) continue;
         const existing = [...menu.querySelectorAll(`[${ENTRY_ATTR}]`)];
         if (!context) {
@@ -4552,15 +4606,16 @@
     // live on the episode side panel, where the app's boot scroll
     // listener hears main-page scrolls; panel-internal scrolls never
     // reach it because scroll events do not bubble). Its class is shared
-    // by a permanently-rendered wrapper with a nonzero rect and no
-    // direct li rows, so keying on class presence alone would arm the
-    // shield forever on detail pages; the li-bearing menu element and
-    // the dismissal underlay both exist only while the menu is open
-    // (verified live 2026-08-03), and requiring both fails toward
-    // native app behavior.
+    // by a permanently-rendered wrapper with a nonzero rect and no row
+    // group of its own, so keying on class presence alone would arm the
+    // shield forever on detail pages; the menu's row group (a ul of li
+    // rows directly under the inner menu element, live-probed
+    // 2026-10-17) and the dismissal underlay both exist only while the
+    // menu is open (the underlay verified live 2026-08-03, the group
+    // 2026-10-17), and requiring both fails toward native app behavior.
     function summaryMenuRect() {
       if (!document.querySelector('.trakt-summary-actions-underlay')) return null;
-      for (const menu of document.querySelectorAll('div.trakt-summary-actions')) {
+      for (const menu of document.querySelectorAll('div.trakt-summary-actions > ul')) {
         if (!menu.querySelector(':scope > li')) continue;
         return menu.getBoundingClientRect();
       }
@@ -4585,9 +4640,10 @@
     window.addEventListener('scroll', shield, { capture: true, passive: true });
   })();
 
-  // Initial pass + re-run as the SPA renders; class toggles and inline style
-  // writes are attribute mutations, so feature scans never retrigger this
-  // childList observer.
+  // Initial pass + re-run as the SPA renders. Class toggles and inline style
+  // writes are attribute mutations this childList observer ignores; scans
+  // that add or remove nodes retrigger it, so every scan callback writes
+  // only when current state differs from its target.
   queueScan();
   new MutationObserver(queueScan).observe(document.body, { childList: true, subtree: true });
 })();

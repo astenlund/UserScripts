@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trakt Improved
 // @namespace    fork-scripts
-// @version      1.51
+// @version      1.52
 // @description  All-in-one enhancements for the new Trakt Web: fade filters for tracked items, one-click Anticipated/Uninterested list toggles, season list management, per-tile IMDb, Rotten Tomatoes and Letterboxd links off the ratings row, classic rating labels, swimlane scrollbar fixes, and a service worker bypass that stops the app's cache-miss 503s on new-tab links.
 // @author       Andreas Stenlund <a.stenlund@gmail.com>
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/trakt_improved.user.js
@@ -3195,7 +3195,7 @@
 
   // ---------------------------------------------------------------------
   // Feature: Uninterested list truncate
-  // One-click "Truncate" entry in the kebab popup menu of the owner's
+  // One-click "Trim" entry in the kebab popup menu of the owner's
   // Uninterested list, trimming it to its newest TRUNCATE_LIMIT items by
   // removing the oldest by listed_at. Personal by design: the target list
   // is hardcoded; for any other user of the script the entry can appear
@@ -3301,8 +3301,8 @@
     }
 
     function currentLabel() {
-      if (state === 'running') return 'Truncating...';
-      if (state === 'idle') return 'Truncate';
+      if (state === 'running') return 'Trimming...';
+      if (state === 'idle') return 'Trim';
       return state;
     }
 
@@ -3413,7 +3413,7 @@
       if (built === null) {
         if (!shapeWarned) {
           shapeWarned = true;
-          warn('Popup row shape unrecognized; cannot inject Truncate');
+          warn('Popup row shape unrecognized; cannot inject Trim');
         }
         return;
       }

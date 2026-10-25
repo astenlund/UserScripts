@@ -5,6 +5,7 @@
 // @description  Removes the model info tooltips from the model selector dropdown items
 // @author       Andreas Stenlund
 // @match        http://localhost:3000/*
+// @match        https://open-webui.taild4ff10.ts.net/*
 // @downloadURL  https://github.com/astenlund/UserScripts/raw/master/open_webui_model_tooltips.user.js
 // @updateURL    https://github.com/astenlund/UserScripts/raw/master/open_webui_model_tooltips.user.js
 // @grant        none
